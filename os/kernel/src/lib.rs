@@ -17,6 +17,9 @@
 #![feature(trait_upcasting)]
 #![feature(core_intrinsics)]
 #![allow(internal_features)]
+#![feature(unsafe_extern_blocks)]
+#![feature(unsafe_attributes)]
+#![feature(asm_const)]
 #![no_std]
 
 use crate::device::apic::Apic;
