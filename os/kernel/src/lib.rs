@@ -15,7 +15,7 @@
 #![feature(fmt_internals)]
 #![feature(abi_x86_interrupt)]
 #![feature(trait_upcasting)]
-#![feature(core_intrinsics)]
+#![feature(ptr_metadata)]
 #![allow(internal_features)]
 #![no_std]
 
