@@ -25,6 +25,7 @@ use x86_64::PrivilegeLevel::Ring0;
 use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::paging::page::PageRange;
 use crate::{allocator, apic, built_info, efi_system_table, gdt, init_acpi_tables, init_apic, init_efi_system_table, init_initrd, init_keyboard, init_pci, init_serial_port, init_terminal, initrd, logger, memory, process_manager, ps2_devices, scheduler, serial_port, terminal, timer, tss};
+use crate::device::{ipi};
 use crate::memory::MemorySpace;
 
 extern "C" {
@@ -160,6 +161,9 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     info!("Initializing system calls");
     syscall_dispatcher::init();
     init_apic();
+
+    //TO-DO: boot ap-Cores
+    start_ap_processors();
 
     // Initialize timer
     {
@@ -317,4 +321,39 @@ fn scan_multiboot2_memory_map(memory_map: &MemoryMapTag) {
                 });
             }
         });
+}
+
+
+// Assembly function for relocating boot code for application cores
+extern "C" { fn copy_boot_code(); }
+fn start_ap_processors() {
+
+    info!("Booting AP cores");
+
+    unsafe { copy_boot_code(); }
+
+    // Sende Init-IPI an alle APs
+    ipi::send_init();
+
+    // min 10ms (10000) warten
+    //pit::wait(10000);
+    //TO-DO Question HOW??
+
+    // The vector is the startup address for the boot code
+    let vector = ((0x40000 as u64) >> 12) as u32;
+
+    info!("   Sending STARTUP IPI #1");
+    ipi::send_startup(vector as u8);
+}
+
+
+//
+// First rust function called from assembly boot code for an
+// application core
+//
+#[no_mangle]
+pub extern fn startup_ap() {
+    info!("Application processor executing 'startup_ap'");
+
+    loop{}
 }
