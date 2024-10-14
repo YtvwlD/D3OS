@@ -8,6 +8,7 @@
 #![feature(fmt_internals)]
 #![feature(abi_x86_interrupt)]
 #![feature(trait_upcasting)]
+#![feature(core_intrinsics)]
 #![allow(internal_features)]
 #![no_std]
 
