@@ -30,10 +30,19 @@ args = [ "build", "-Z", "build-std=core,alloc", "-Z", "build-std-features=compil
 command = "nasm"
 args = [ "-f", "elf64", "-w+error=label-redef-late", "-o", "${ASM_OBJECT}", "${SOURCE_DIRECOTRY}/boot.asm" ]
 
+[tasks.build-bp-asm]
+command = "nasm"
+args = [ "-f", "elf64", "-w+error=label-redef-late", "-o", "${BUILD_DIRECTORY}/boot_bp.o", "${SOURCE_DIRECOTRY}/device/boot_bp.asm" ]
+
+[tasks.build-ap-asm]
+command = "nasm"
+args = [ "-f", "elf64", "-w+error=label-redef-late", "-o", "${BUILD_DIRECTORY}/boot_ap.o", "${SOURCE_DIRECOTRY}/device/boot_ap.asm" ]
+
+
 [tasks.link]
 command = "${LINKER}"
-args = [ "-n", "-T", "${LINKER_FILE}", "-o", "${KERNEL}", "${ASM_OBJECT}", "${RUST_OBJECT}" ]
-dependencies = [ "compile", "build-asm" ]
+args = [ "-n", "-T", "${LINKER_FILE}", "-o", "${KERNEL}", "${ASM_OBJECT}", "${BUILD_DIRECTORY}/boot_ap.o", "${BUILD_DIRECTORY}/boot_bp.o", "${RUST_OBJECT}" ]
+dependencies = [ "compile", "build-asm", "build-ap-asm", "build-bp-asm" ]
 
 [tasks.link.mac]
 command = "${LINKER_MAC}"
