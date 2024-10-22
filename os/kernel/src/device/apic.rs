@@ -61,6 +61,15 @@ impl Apic {
         info!("[{}] application {} detected", cpu_info.application_processors.len(), if cpu_info.application_processors.len() == 1 { "processor" } else { "processors" });
         info!("CPU [{}] is the bootstrap processor", cpu_info.boot_processor.processor_uid);
 
+        /*
+        dpmos wo kuckt er nach wv cores welche tabellen -> d30s
+        madt tabelle hinteeinander apic struktur -> wv kerne
+        apic acpi tabelle
+        lock asm befehl in dpmos wichtig für stackaufteilung
+        cpu cores angeben ohne assembler möglich -> erfolgsgefühl
+        weniger kopieren, mehr howto verstehen
+        */
+
         // Read physical APIC MMIO base address and map it to the kernel address space
         // Needs to be executed in unsafe block; APIC availability has been checked before, so this should work.
         let apic_page = Page::from_start_address(VirtAddr::new(madt.local_apic_address as u64)).expect("Local Apic MMIO address is not page aligned");
