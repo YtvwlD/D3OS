@@ -1,6 +1,7 @@
 #!/bin/bash
 
-readonly OVMF_URL="http://archive.ubuntu.com/ubuntu/pool/main/e/edk2/ovmf_0~20191122.bd85bf54-2ubuntu3.5_all.deb"
+readonly OVMF_URL="http://ports.ubuntu.com/pool/main/e/edk2/ovmf_0~20191122.bd85bf54-2ubuntu3_all.deb"
+#readonly OVMF_URL="http://archive.ubuntu.com/ubuntu/pool/main/e/edk2/ovmf_0~20191122.bd85bf54-2ubuntu3.5_all.deb"
 
 cleanup_and_exit() {
   local exit_code=$1
