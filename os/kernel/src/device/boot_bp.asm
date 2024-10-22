@@ -57,9 +57,9 @@ pagetable_end:  equ 0x200000
 
 ; In 'linker.ld'
 [EXTERN ___BOOT_AP_START__]     
-[EXTERN ___BOOT_AP_END__]     
+[EXTERN ___BOOT_AP_END__]
 
-; In 'boot.asm', benoetigt beim Umkopieren dieses Boot-Codes fuer die APs
+; In 'boot.asm', benoetigt beim Umkopieren dieses Boot-Codes fuer die APs           (technically in boot_ap.asm)
 [EXTERN gdt_ap]
 [EXTERN gdtd_ap]
 
