@@ -56,7 +56,7 @@ pagetable_end:  equ 0x200000
 ; [EXTERN reprogram_pics]
 
 ; In 'linker.ld'
-[EXTERN ___BOOT_AP_START__]     
+[EXTERN ___BOOT_AP_START__]
 [EXTERN ___BOOT_AP_END__]
 
 ; In 'boot.asm', benoetigt beim Umkopieren dieses Boot-Codes fuer die APs           (technically in boot_ap.asm)
@@ -70,14 +70,14 @@ pagetable_end:  equ 0x200000
 [SECTION .text]
 
 ;
-; 32 bit entry function for bootstrap processor and later called by 
+; 32 bit entry function for bootstrap processor and later called by
 ; application processors from 'boot_ap.asm'
 ; Sets up GDT and a stack
 ;
 [BITS 32]
 startup:
 	cld              ; required by GCC; Rust?
-	cli              
+	cli
 	lgdt   [gdt_80]  ; load GDT
 
 	; Set segment registers
