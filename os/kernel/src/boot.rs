@@ -330,7 +330,7 @@ fn start_ap_processors() {
 
     info!("Booting AP cores");
 
-    //unsafe { copy_boot_code(); }
+    unsafe { copy_boot_code(); }
 
     // Sende Init-IPI an alle APs
     ipi::send_init();
