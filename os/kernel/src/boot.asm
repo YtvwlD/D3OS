@@ -88,12 +88,6 @@ pagetable_end:  equ 0x200000
 
 
 
-
-; Limit and address of GDT, needed to load GDT
-gdtd_ap:
-	dw  3*8 - 1   ; GDT Limit=24, 4 GDT entries - 1
-	;dd  gdt_ap    ; Adress of GDT
-
 [SECTION .text]
 [BITS 64]
 
@@ -185,6 +179,13 @@ clear_bss:
     mov edi, eax
     mov esi, ebx
     call start
+
+
+
+; Limit and address of GDT, needed to load GDT
+gdtd_ap:
+	dw  3*8 - 1   ; GDT Limit=24, 4 GDT entries - 1
+	;dd  gdt_ap    ; Adress of GDT
 
 [SECTION .bss]
 
