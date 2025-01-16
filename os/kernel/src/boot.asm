@@ -63,6 +63,37 @@ MULTIBOOT2_GRAPHICS_WIDTH  equ 800
 MULTIBOOT2_GRAPHICS_HEIGHT equ 600
 MULTIBOOT2_GRAPHICS_BPP    equ 32
 
+;
+; boot_bp.asm - Constants
+;
+
+; Address of boot code for application processors
+; Also defined in 'consts.rs'. Must be consistent!
+RELOCATE_BOOT_CODE: equ 0x40000
+
+; Stack
+STACK_MEM_SIZE: equ  65536	; total size of all stacks
+
+; 254 GB max. supported DRAM size by paging tables
+MAX_MEM: equ 254
+
+; Speicherplatz fuer die Seitentabelle
+
+[GLOBAL pagetable_start]
+pagetable_start:  equ 0x103000
+
+[GLOBAL pagetable_end]
+pagetable_end:  equ 0x200000
+
+
+
+
+
+; Limit and address of GDT, needed to load GDT
+gdtd_ap:
+	dw  3*8 - 1   ; GDT Limit=24, 4 GDT entries - 1
+	;dd  gdt_ap    ; Adress of GDT
+
 [SECTION .text]
 [BITS 64]
 
