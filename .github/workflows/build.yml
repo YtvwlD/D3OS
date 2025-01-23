@@ -3,41 +3,38 @@ on: [push]
 
 jobs:
   build-on-linux:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
       - name: Install packages
         uses: amitie10g/install-package@v1.2.3
         with:
-          apt: build-essential nasm
+          apt: build-essential nasm dosfstools
 
-      - name: Install Rust for x86_64 Linux
-        uses: actions-rs/toolchain@v1
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@nightly
         with:
-          toolchain: nightly
-          override: true
-          target: x86_64-unknown-linux-gnu
-          components: rust-src
-      - name: Install Rust for i686 UEFI
-        uses: actions-rs/toolchain@v1
+          components: "rust-src"
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
         with:
-          toolchain: nightly
-          target: i686-unknown-uefi
-      - name: Install Rust for x86_64 UEFI
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          target: x86_64-unknown-uefi
+          shared-key: cargo-${{ hashFiles('**/Cargo.lock') }}
+          cache-all-crates: true
+          cache-on-failure: true
 
       - name: Install cargo-make
         run: cargo install --no-default-features cargo-make
 
-      - name: Install towbootctl
-        run: cargo install --git https://github.com/hhuOS/towboot --features=binary -Z bindeps towbootctl
+      - name: Cleanup towbootctl
+        run: rm -f towbootctl
 
       - name: Build
-        run: cargo make --no-workspace image
+        uses: clechasseur/rs-cargo@v2
+        with:
+          command: make
+          args: --no-workspace image
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -45,44 +42,7 @@ jobs:
           name: D3OS
           path: d3os.img
 
-  build-on-intel-mac:
-    runs-on: macos-12
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install packages
-        uses: amitie10g/install-package@v1.2.3
-        with:
-          brew: x86_64-elf-binutils nasm
-
-      - name: Install Rust for x86_64 MacOS
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          override: true
-          target: x86_64-apple-darwin
-          components: rust-src
-      - name: Install Rust for i686 UEFI
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          target: i686-unknown-uefi
-      - name: Install Rust for x86_64 UEFI
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          target: x86_64-unknown-uefi
-
-      - name: Install cargo-make
-        run: cargo install --no-default-features cargo-make
-
-      - name: Install towbootctl
-        run: cargo install --git https://github.com/hhuOS/towboot --features=binary -Z bindeps towbootctl
-
-      - name: Build
-        run: cargo make --no-workspace image
-
-  build-on-apple-silicon-mac:
+  build-on-macos:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -90,37 +50,28 @@ jobs:
       - name: Install packages
         uses: amitie10g/install-package@v1.2.3
         with:
-          brew: x86_64-elf-binutils nasm
+          brew: x86_64-elf-binutils x86_64-elf-gcc nasm dosfstools
 
-      - name: Install Rust for AArch64 MacOS
-        uses: actions-rs/toolchain@v1
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@nightly
         with:
-          toolchain: nightly
-          override: true
-          target: aarch64-apple-darwin
-          components: rust-src
-      - name: Install Rust for x86_64 MacOS
-        uses: actions-rs/toolchain@v1
+          components: "rust-src"
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
         with:
-          toolchain: nightly
-          target: x86_64-apple-darwin
-          components: rust-src
-      - name: Install Rust for i686 UEFI
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          target: i686-unknown-uefi
-      - name: Install Rust for x86_64 UEFI
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          target: x86_64-unknown-uefi
+          shared-key: cargo-${{ hashFiles('**/Cargo.lock') }}
+          cache-all-crates: true
+          cache-on-failure: true
 
       - name: Install cargo-make
         run: cargo install --no-default-features cargo-make
 
-      - name: Install towbootctl
-        run: cargo install --git https://github.com/hhuOS/towboot --features=binary -Z bindeps towbootctl
+      - name: Cleanup towbootctl
+        run: rm -f towbootctl
 
       - name: Build
-        run: cargo make --no-workspace image
+        uses: clechasseur/rs-cargo@v2
+        with:
+          command: make
+          args: --no-workspace image

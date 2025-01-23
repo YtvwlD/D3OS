@@ -1,12 +1,14 @@
 [package]
-edition = "2021"
-name = "io"
+edition = "2024"
+name = "naming"
 version = "0.1.0"
 authors = ["Michael Schöttner <michael.schoettner@hhu.de>, Fabian Ruhland <ruhland@hhu.de>"]
 
 [dependencies]
 # Local dependencies
 syscall = { path = "../syscall" }
+terminal = { path = "../terminal" }
 
-# External dependencies
-spin = "0.9.8"
+# External depencies
+num_enum = { version = "0.7", default-features = false }
+bitflags = "1.0"

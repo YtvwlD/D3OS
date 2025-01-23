@@ -1,13 +1,24 @@
+/* ╔═════════════════════════════════════════════════════════════════════════╗
+   ║ Module: lib                                                             ║
+   ╟─────────────────────────────────────────────────────────────────────────╢
+   ║ Descr.: Entry function for an application.                              ║
+   ╟─────────────────────────────────────────────────────────────────────────╢
+   ║ Author: Fabian Ruhland, 31.8.2024, HHU                                  ║
+   ╚═════════════════════════════════════════════════════════════════════════╝
+*/
 #![no_std]
+extern crate alloc;
 
-use core::panic::PanicInfo;
-use linked_list_allocator::LockedHeap;
+pub mod env;
+
 use concurrent::{process, thread};
-use io::{print, println};
-use syscall::{syscall1, SystemCall};
+use core::panic::PanicInfo;
+use terminal::{print, println};
+use linked_list_allocator::LockedHeap;
+use syscall::{syscall, SystemCall};
 
-extern {
-    fn main();
+unsafe extern "C" {
+    fn main(argc: isize, argv: *const *const u8) -> isize;
 }
 
 const HEAP_SIZE: usize = 0x100000;
@@ -21,11 +32,22 @@ fn panic(info: &PanicInfo) -> ! {
     thread::exit();
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn entry() {
-    let heap_start = syscall1(SystemCall::MapUserHeap, HEAP_SIZE) as *mut u8;
-    unsafe { ALLOCATOR.lock().init(heap_start, HEAP_SIZE); }
+    let heap_start: *mut u8;
 
-    unsafe { main(); }
+    let res = syscall(SystemCall::MapUserHeap, &[HEAP_SIZE]);
+    match res {
+        Ok(hs) => heap_start = hs as *mut u8,
+        Err(_) => panic!("Could not create user heap."),
+    }
+
+    unsafe {
+        ALLOCATOR.lock().init(heap_start, HEAP_SIZE);
+    }
+
+    unsafe {
+        main(*env::ARGC_PTR as isize, env::ARGV_PTR);
+    }
     process::exit();
 }
