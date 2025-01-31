@@ -15,7 +15,7 @@ alias = "qemu"
 
 [tasks.qemu]
 command = "qemu-system-x86_64"
-dependencies = [ "image", "hdd", "ovmf" ]
+dependencies = [ "image", "hdd" ]
 args = [
     # Base machine configuration
     "-machine", "q35,nvdimm=on,pcspk-audiodev=audio0",
@@ -87,7 +87,7 @@ args = [
 [tasks.debug-signal-vscode]
 command = "echo"
 args = [ "Ready to debug" ]
-dependencies = [ "image", "hdd", "ovmf" ]
+dependencies = [ "image", "hdd" ]
 
 [tasks.ovmf]
 command = "wget"
