@@ -53,7 +53,6 @@ use crate::memory::{MemorySpace, nvmem, PAGE_SIZE};
 use crate::memory::nvmem::Nfit;
 use crate::memory::r#virtual::page_table_index;
 use crate::network::rtl8139;
-use crate::device::{ipi};
 
 // import labels from linker script 'link.ld'
 unsafe extern "C" {
@@ -88,7 +87,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     // Has to be done after EFI boot services have been exited, since they rely on their own GDT
     info!("Initializing GDT");
     init_gdt();
-
+    
     // The bootloader marks the kernel image region as available, so we need to reserve it manually
     unsafe { memory::physical::reserve(kernel_image_region()); }
 
@@ -121,7 +120,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     // Initialize terminal and enable terminal logging
     init_terminal(fb_info.address() as *mut u8, fb_info.pitch(), fb_info.width(), fb_info.height(), fb_info.bpp());
     logger().register(terminal());
-
+ 
     // Dumping basic infos
     info!("Welcome to D3OS!");
     let version = format!("v{} ({} - O{})", built_info::PKG_VERSION, built_info::PROFILE, built_info::OPT_LEVEL);
@@ -159,9 +158,6 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     syscall_dispatcher::init();
     info!("Initializing APIC");
     init_apic();
-
-    //TO-DO: boot ap-Cores
-    start_ap_processors();
 
     // Initialize timer
     info!("Initializing timer");
@@ -385,7 +381,7 @@ fn multiboot2_search_memory_map(multiboot2_addr: *const BootInformationHeader) -
             info!("Exiting EFI boot services to obtain runtime system table and memory map");
             memory_map = uefi::boot::exit_boot_services(MemoryType::LOADER_DATA);
         }
-
+        
         scan_efi_memory_map(&memory_map);
     } else {
         info!("EFI boot services have already been exited by the bootloader");
@@ -435,12 +431,12 @@ fn scan_efi_multiboot2_memory_map(memory_map: &EFIMemoryMapTag) {
         .for_each(|area| {
             let start = PhysFrame::from_start_address(PhysAddr::new(area.phys_start).align_up(PAGE_SIZE as u64)).unwrap();
             let frames = PhysFrame::range(start, start + area.page_count);
-
+            
             // Non-conventional memory may be write-protected, and we need to unprotect it first
             if area.ty.0 != MemoryType::CONVENTIONAL.0 {
                 unprotect_frames(frames);
             }
-
+            
             unsafe { memory::physical::insert(frames); }
         });
 }
@@ -469,19 +465,19 @@ fn scan_efi_memory_map(memory_map: &dyn MemoryMap) {
 
 fn unprotect_frames(frames: PhysFrameRange) {
     unsafe { Cr0::update(|flags| flags.remove(Cr0Flags::WRITE_PROTECT)) };
-
+    
     let root_level = if Cr4::read().contains(Cr4Flags::L5_PAGING) { 5 } else { 4 };
     for frame in frames {
         unprotect_frame(frame, root_level);
     }
-
+    
     unsafe { Cr0::update(|flags| flags.insert(Cr0Flags::WRITE_PROTECT)) };
 }
 
 fn unprotect_frame(frame: PhysFrame, root_level: usize) {
     let addr = VirtAddr::new(frame.start_address().as_u64());
     let mut page_table = unsafe { (Cr3::read().0.start_address().as_u64() as *mut PageTable).as_mut().unwrap() };
-
+    
     let mut level = root_level;
     loop  {
         let index = page_table_index(addr, level);
@@ -496,39 +492,4 @@ fn unprotect_frame(frame: PhysFrame, root_level: usize) {
         page_table = unsafe { (entry.addr().as_u64() as *mut PageTable).as_mut().unwrap() };
         level -= 1;
     }
-}
-
-
-// Assembly function for relocating boot code for application cores
-extern "C" { fn copy_boot_code(); }
-fn start_ap_processors() {
-
-    info!("Booting AP cores");
-
-    unsafe { copy_boot_code(); }
-
-    // Sende Init-IPI an alle APs
-    ipi::send_init();
-
-    // min 10ms (10000) warten
-    //pit::wait(10000);
-    //TO-DO Question HOW??
-
-    // The vector is the startup address for the boot code
-    let vector = ((0x40000 as u64) >> 12) as u32;
-
-    info!("   Sending STARTUP IPI #1");
-    ipi::send_startup(vector as u8);
-}
-
-
-//
-// First rust function called from assembly boot code for an
-// application core
-//
-#[no_mangle]
-pub extern fn startup_ap() {
-    info!("Application processor executing 'startup_ap'");
-
-    loop{}
 }
