@@ -160,13 +160,13 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     info!("Initializing APIC");
     init_apic();
 
-    //TO-DO: boot ap-Cores
-    start_ap_processors();
-
     // Initialize timer
     info!("Initializing timer");
     let timer = timer();
     Timer::plugin(Arc::clone(&timer));
+
+    //TO-DO: boot ap-Cores
+    start_ap_processors();
 
     // Enable interrupts
     info!("Enabling interrupts");
@@ -500,7 +500,7 @@ fn unprotect_frame(frame: PhysFrame, root_level: usize) {
 
 
 // Assembly function for relocating boot code for application cores
-extern "C" { fn copy_boot_code(); }
+unsafe extern "C" { fn copy_boot_code(); }
 fn start_ap_processors() {
 
     info!("Booting AP cores");
@@ -511,8 +511,9 @@ fn start_ap_processors() {
     ipi::send_init();
 
     // min 10ms (10000) warten
-    //pit::wait(10000);
-    //TO-DO Question HOW??
+    timer().wait(10000);
+
+    //klappt das? sysout
 
     // The vector is the startup address for the boot code
     let vector = ((0x40000 as u64) >> 12) as u32;
@@ -526,7 +527,7 @@ fn start_ap_processors() {
 // First rust function called from assembly boot code for an
 // application core
 //
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern fn startup_ap() {
     info!("Application processor executing 'startup_ap'");
 
