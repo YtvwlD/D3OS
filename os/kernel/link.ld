@@ -17,7 +17,8 @@ SECTIONS {
 
     .boot :
     {
-        *(.multiboot2_header)
+        /* ensure that the multiboot header is at the beginning */
+        *(.multiboot2_sec)
     }
 
     .text ALIGN (4K) :
