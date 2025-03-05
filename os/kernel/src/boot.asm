@@ -7,7 +7,7 @@
 ; Multiboot2 constants
 MULTIBOOT2_HEADER_MAGIC equ 0xe85250d6
 MULTIBOOT2_HEADER_ARCHITECTURE equ 0
-MULTIBOOT2_HEADER_LENGTH equ (boot - multiboot2_header)
+MULTIBOOT2_HEADER_LENGTH equ (multiboot2_end - multiboot2_header)
 MULTIBOOT2_HEADER_CHECKSUM equ -(MULTIBOOT2_HEADER_MAGIC + MULTIBOOT2_HEADER_ARCHITECTURE + MULTIBOOT2_HEADER_LENGTH)
 
 ; Multiboot2 tag types
@@ -91,8 +91,7 @@ pagetable_end:  equ 0x200000
 [GLOBAL RELOCATE_BOOT_CODE] ; wird in 'startup.rs' benoetigt
 
 
-[SECTION .text]
-
+[SECTION .multiboot2_sec]
 ; boot.asm
 [BITS 64]
 multiboot2_header:
@@ -160,6 +159,9 @@ multiboot2_header:
     dw MULTIBOOT2_TAG_TERMINATE
     dw MULTIBOOT2_TAG_FLAG_REQUIRED
     dd 8
+multiboot2_end:
+
+[SECTION .text]
 
 boot:
     cld ; Expected by GCC
@@ -241,6 +243,7 @@ init_longmode:
 	mov    cr0, eax
 
 	; Jump to 64 bit code segment (activates full long mode)
+	;jmp    2 * 0x8 : longmode_start (version of this code in dpmos)
 	jmp    2 * 0x8 : longmode_start_ap
 
 
@@ -366,31 +369,6 @@ copyc:
 	ret
 
 
-
-;
-;boot_ap.asm
-;
-USE32
-
-; 32 bit protected mode from here
-; setting up segment registers and call 'start' in 'boot_bp.asm'
-boot_ap32:
-	mov ax, 0x10
-	mov ds, ax
-	mov es, ax
-	mov fs, ax
-	mov gs, ax
-	mov ss, ax
-
-	; In 'boot_bp.asm"
-	; jmp startup
-
-    ; print `**` to screen
-    ; should never been reached
-    mov dword [0xb8000], 0x2e262e26
-	hlt
-
-
 ;
 ; boot_ap section
 ;
@@ -398,7 +376,7 @@ boot_ap32:
 ; The Segment '.boot_seg_ap' will be relocated by the bootstrap proc.
 ; grub loads the code above 1 MB but real mode code needs to be <1 MB
 ;
-;[SECTION .boot_seg_ap]
+[SECTION .boot_seg_ap]
 
 ; Variables need to be modified during code relocation in 'bootbp.asm'
 [GLOBAL gdt_ap]
@@ -457,6 +435,28 @@ gdtd_ap:
 	dw  3*8 - 1   ; GDT Limit=24, 4 GDT entries - 1
 	dd  gdt_ap    ; Adress of GDT
 
+
+[SECTION .text]
+
+USE32
+
+; 32 bit protected mode from here
+; setting up segment registers and call 'start' in 'boot_bp.asm'
+boot_ap32:
+	mov ax, 0x10
+	mov ds, ax
+	mov es, ax
+	mov fs, ax
+	mov gs, ax
+	mov ss, ax
+
+	; In 'boot_bp.asm"
+	jmp startup
+
+    ; print `**` to screen
+    ; should never been reached
+    mov dword [0xb8000], 0x2e262e26
+	hlt
 
 
 
