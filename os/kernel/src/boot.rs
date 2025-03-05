@@ -511,9 +511,7 @@ fn start_ap_processors() {
     ipi::send_init();
 
     // min 10ms (10000) warten
-    timer().wait(10000);
-
-    //klappt das? sysout
+    timer().wait(1000);
 
     // The vector is the startup address for the boot code
     let vector = ((0x40000 as u64) >> 12) as u32;
