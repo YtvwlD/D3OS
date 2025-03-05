@@ -54,6 +54,7 @@ use crate::memory::nvmem::Nfit;
 use crate::memory::r#virtual::page_table_index;
 use crate::network::rtl8139;
 use crate::device::{ipi};
+use crate::interrupt::interrupt_dispatcher::setup_idt;
 
 // import labels from linker script 'link.ld'
 unsafe extern "C" {
@@ -527,7 +528,13 @@ fn start_ap_processors() {
 //
 #[unsafe(no_mangle)]
 pub extern fn startup_ap() {
-    info!("Application processor executing 'startup_ap'");
+    info!("    Application processor executing 'startup_ap'");
 
     loop{}
+}
+
+#[unsafe(no_mangle)]
+pub extern fn setupIdt() {
+    info!("    Setting up IDT for AP");
+    setup_idt();
 }

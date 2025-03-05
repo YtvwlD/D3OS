@@ -324,7 +324,9 @@ longmode_start:
 	jmp end
 
 longmode_start_ap:
-    ; Call Rust entry function in 'startup.rs' for application proc.
+    extern setupIdt
+    call setupIdt
+    ; Call Rust entry function in 'boot.rs' for application proc.
     extern startup_ap
     call startup_ap
 
