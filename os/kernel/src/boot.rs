@@ -13,6 +13,7 @@ use crate::device::ps2::Keyboard;
 use crate::device::qemu_cfg;
 use crate::device::serial::SerialPort;
 use crate::interrupt::interrupt_dispatcher;
+use crate::ipi::{send_init, send_startup};
 use crate::memory::nvmem::Nfit;
 use crate::memory::pages::page_table_index;
 use crate::memory::vmm::{VirtualMemoryArea, VmaType};
@@ -68,6 +69,7 @@ unsafe extern "C" {
     static ___KERNEL_DATA_END__: u64; // end address of OS image
 }
 
+const RELOCATE_BOOT_CODE: u64 = 0x40000;
 const INIT_HEAP_PAGES: usize = 0x400; // number of heap pages for booting the OS
 
 /// First Rust function called from assembly code `boot.asm` \
@@ -220,6 +222,9 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     info!("Initializing timer");
     let timer = timer();
     Timer::plugin(Arc::clone(&timer));
+
+    // Initialize AP's
+    start_ap_processors();
 
     // Enable interrupts
     info!("Enabling interrupts");
@@ -607,4 +612,45 @@ fn unprotect_frame(frame: PhysFrame, root_level: usize) {
         page_table = unsafe { (entry.addr().as_u64() as *mut PageTable).as_mut().unwrap() };
         level -= 1;
     }
+}
+
+// Assembly function for relocating boot code for application cores
+unsafe extern "C" { fn copy_boot_code(); }
+
+fn start_ap_processors() {
+
+    info!("Booting AP cores");
+
+    unsafe { copy_boot_code(); }
+
+    // Sende Init-IPI an alle APs
+    send_init();
+
+    // min 10ms (10000) warten
+    timer().wait(1000);
+
+    // The vector is the startup address for the boot code
+    let vector = (RELOCATE_BOOT_CODE >> 12) as u32;
+
+    info!("   Sending STARTUP IPI #1");
+    send_startup(vector as u8);
+}
+
+
+
+//
+// First rust function called from assembly boot code for an
+// application core
+//
+#[unsafe(no_mangle)]
+pub extern fn startup_ap() {
+    println!("    Application processor executing 'startup_ap'");
+
+    loop{}
+}
+#[unsafe(no_mangle)]
+pub extern fn setup_idt() {
+    println!("    Application processor executing 'startup_ap'");
+
+    loop{}
 }

@@ -14,6 +14,7 @@
 #![feature(abi_x86_interrupt)]
 #![feature(ptr_metadata)]
 #![feature(let_chains)]
+#![feature(core_intrinsics)]
 #![allow(internal_features)]
 #![no_std]
 
@@ -58,6 +59,7 @@ pub mod device;
 pub mod boot;
 pub mod consts;
 pub mod interrupt;
+pub mod ipi;
 pub mod log;
 pub mod memory;
 pub mod naming;
