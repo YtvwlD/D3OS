@@ -21,6 +21,7 @@ args = [
     "-machine", "q35,nvdimm=on,pcspk-audiodev=audio0",
     "-m", "256M,slots=2,maxmem=1G",
     "-cpu", "qemu64",
+    "-smp", "4",  # Use 4 CPU cores
     "-bios", "RELEASEX64_OVMF.fd",
     "-boot", "d",
     "-vga", "std",
@@ -55,6 +56,7 @@ args = [
     "-machine", "q35,nvdimm=on,pcspk-audiodev=audio0",
     "-m", "256M,slots=2,maxmem=1G",
     "-cpu", "qemu64",
+    "-smp", "4",  # Use 4 CPU cores
     "-bios", "RELEASEX64_OVMF.fd",
     "-boot", "c",
     "-vga", "std",
