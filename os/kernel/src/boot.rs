@@ -644,13 +644,13 @@ fn start_ap_processors() {
 //
 #[unsafe(no_mangle)]
 pub extern fn startup_ap() {
-    println!("    Application processor executing 'startup_ap'");
+    info!("    Application processor executing 'startup_ap'");
+
 
     loop{}
 }
 #[unsafe(no_mangle)]
 pub extern fn setup_idt() {
-    println!("    Application processor executing 'startup_ap'");
-
-    loop{}
+    info!("    Initializing IDT for AP");
+    //interrupt_dispatcher::setup_idt();
 }
