@@ -223,12 +223,12 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     let timer = timer();
     Timer::plugin(Arc::clone(&timer));
 
-    // Initialize AP's
-    start_ap_processors();
-
     // Enable interrupts
     info!("Enabling interrupts");
     interrupts::enable();
+
+    // Initialize AP's
+    start_ap_processors();
 
     // Initialize EFI runtime service (if available and not done already during memory initialization)
     if uefi::table::system_table_raw().is_none() {
@@ -627,7 +627,7 @@ fn start_ap_processors() {
     send_init();
 
     // min 10ms (10000) warten
-    timer().wait(1000);
+    timer().wait(10000);
 
     // The vector is the startup address for the boot code
     let vector = (RELOCATE_BOOT_CODE >> 12) as u32;
