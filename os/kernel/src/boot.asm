@@ -126,6 +126,16 @@ multiboot2_header:
     dw MULTIBOOT2_TAG_FLAG_OPTIONAL
     dd 8
 
+    ; allow relocation
+    align 8
+    dw MULTIBOOT2_TAG_RELOCATABLE_HEADER
+    dw MULTIBOOT2_TAG_FLAG_OPTIONAL
+    dd 24
+    dd 0 ; lowest address
+    dd 0xffffffff ; highest address
+    dd 4096 ; alignment
+    dd 0 ; preference: ideally, don't relocate
+
     ; Termination tag
     align 8
     dw MULTIBOOT2_TAG_TERMINATE
