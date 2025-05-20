@@ -16,7 +16,6 @@ LIBRARY_DIRECTORY = "${CARGO_MAKE_WORKSPACE_WORKING_DIRECTORY}/os/library"
 LINKER_FILE = "${CARGO_MAKE_WORKING_DIRECTORY}/link.ld"
 RUST_OBJECT = "${BUILD_DIRECTORY}/lib${CARGO_MAKE_PROJECT_NAME}.a"
 ASM_OBJECT = "${BUILD_DIRECTORY}/boot.o"
-ASM_OBJECT_BP = "${BUILD_DIRECTORY}/boot_bp.o"
 ASM_OBJECT_AP = "${BUILD_DIRECTORY}/boot_ap.o"
 KERNEL = "${BOOTLOADER_DIRECTORY}/${CARGO_MAKE_PROJECT_NAME}.elf"
 
@@ -39,11 +38,6 @@ command = "nasm"
 args = [ "-f", "elf64", "-w+error=label-redef-late", "-o", "${ASM_OBJECT}", "${SOURCE_DIRECTORY}/boot.asm" ]
 condition = { files_modified = { input = [ "${SOURCE_DIRECTORY}/boot.asm" ], output = [ "${BUILD_DIRECTORY}/boot.o" ] } }
 
-[tasks.build-asm-bp]
-command = "nasm"
-args = [ "-f", "elf64", "-w+error=label-redef-late", "-o", "${ASM_OBJECT_BP}", "${SOURCE_DIRECTORY}/boot_bp.asm" ]
-condition = { files_modified = { input = [ "${SOURCE_DIRECTORY}/boot_bp.asm" ], output = [ "${BUILD_DIRECTORY}/boot_bp.o" ] } }
-
 [tasks.build-asm-ap]
 command = "nasm"
 args = [ "-f", "elf64", "-w+error=label-redef-late", "-o", "${ASM_OBJECT_AP}", "${SOURCE_DIRECTORY}/boot_ap.asm" ]
@@ -51,8 +45,8 @@ condition = { files_modified = { input = [ "${SOURCE_DIRECTORY}/boot_ap.asm" ], 
 
 [tasks.link]
 command = "${LINKER}"
-args = [ "-n", "-T", "${LINKER_FILE}", "-o", "${KERNEL}", "${ASM_OBJECT}", "${ASM_OBJECT_BP}", "${ASM_OBJECT_AP}", "${RUST_OBJECT}" ]
-dependencies = [ "compile", "build-asm" , "build-asm-bp" , "build-asm-ap" ]
+args = [ "-n", "-T", "${LINKER_FILE}", "-o", "${KERNEL}", "${ASM_OBJECT}", "${ASM_OBJECT_AP}", "${RUST_OBJECT}" ]
+dependencies = [ "compile", "build-asm", "build-asm-ap" ]
 condition = { files_modified = { input = [ "${BUILD_DIRECTORY}/lib${CARGO_MAKE_PROJECT_NAME}*", "${LINKER_FILE}" ], output = [ "${BOOTLOADER_DIRECTORY}/kernel.elf" ] } }
 
 # Cleanup tasks
