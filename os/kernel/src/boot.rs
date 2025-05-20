@@ -67,9 +67,10 @@ use x86_64::{PhysAddr, VirtAddr};
 unsafe extern "C" {
     static ___KERNEL_DATA_START__: u64; // start address of OS image
     static ___KERNEL_DATA_END__: u64; // end address of OS image
+    static ___BOOT_AP_START__: u64; // start address of the AP code
+    static ___BOOT_AP_END__: u64; // start address of the AP code
 }
 
-const RELOCATE_BOOT_CODE: u64 = 0x40000;
 const INIT_HEAP_PAGES: usize = 0x400; // number of heap pages for booting the OS
 
 /// First Rust function called from assembly code `boot.asm` \
@@ -101,6 +102,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     // The bootloader marks the kernel image region as available, so we need to reserve it manually
     unsafe {
         memory::frames::reserve(kernel_image_region());
+        memory::frames::reserve(boot_ap_region());
     }
 
     // and initialize kernel heap, after which formatted strings may be used in logs and panics.
@@ -441,6 +443,25 @@ fn kernel_image_region() -> PhysFrameRange {
     return PhysFrameRange { start, end };
 }
 
+/// Return `PhysFrameRange` for memory occupied by the AP boot code
+fn boot_ap_region() -> PhysFrameRange {
+    let start: PhysFrame;
+    let end: PhysFrame;
+
+    unsafe {
+        start = PhysFrame::from_start_address(PhysAddr::new(
+            ptr::from_ref(&___BOOT_AP_START__) as u64,
+        ))
+        .expect("AP boot code is not page aligned");
+        end = PhysFrame::from_start_address(
+            PhysAddr::new(ptr::from_ref(&___BOOT_AP_END__) as u64).align_up(PAGE_SIZE as u64),
+        )
+        .unwrap();
+    }
+
+    return PhysFrameRange { start, end };
+}
+
 /// Identifies usable memory and initialize physical memory management \
 /// and returns `BootInformation` by searching the memory maps, provided by bootloader of EFI. \
 ///   `multiboot2_addr` is the address of multiboot2 info records
@@ -614,14 +635,12 @@ fn unprotect_frame(frame: PhysFrame, root_level: usize) {
     }
 }
 
-// Assembly function for relocating boot code for application cores
-unsafe extern "C" { fn copy_boot_code(); }
-
 fn start_ap_processors() {
 
     info!("Booting AP cores");
-
-    unsafe { copy_boot_code(); }
+    let boot_ap_start = ptr::from_ref(unsafe { &___BOOT_AP_START__ });
+    let boot_ap_end = ptr::from_ref(unsafe { &___BOOT_AP_END__ });
+    debug!("boot code is at {boot_ap_start:?}-{boot_ap_end:?}");
 
     // Sende Init-IPI an alle APs
     send_init();
@@ -630,10 +649,13 @@ fn start_ap_processors() {
     timer().wait(10000);
 
     // The vector is the startup address for the boot code
-    let vector = (RELOCATE_BOOT_CODE >> 12) as u32;
+    // the APs are starting at vector*256:0, so vector*256*16 aka vector << 12
+    let vector = (boot_ap_start.addr() >> 12).try_into().unwrap();
+    assert_ne!(vector, 0);
 
-    info!("   Sending STARTUP IPI #1");
-    send_startup(vector as u8);
+    info!("   Sending STARTUP IPI #1 @ {vector}");
+    // some APs apparently start at 0?
+    send_startup(vector);
 }
 
 
@@ -644,13 +666,13 @@ fn start_ap_processors() {
 //
 #[unsafe(no_mangle)]
 pub extern fn startup_ap() {
-    info!("    Application processor executing 'startup_ap'");
+    //info!("    Application processor executing 'startup_ap'");
 
 
     loop{}
 }
 #[unsafe(no_mangle)]
 pub extern fn setup_idt() {
-    info!("    Initializing IDT for AP");
+    //info!("    Initializing IDT for AP");
     //interrupt_dispatcher::setup_idt();
 }

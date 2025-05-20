@@ -18,11 +18,8 @@
 ;* Autor:           Michael Schoettner, Univ. Duesseldorf, 25.8.2022  *
 ;**********************************************************************
 
-; 
-; The Segment '.boot_seg_ap' will be relocated by the bootstrap proc.
-; grub loads the code above 1 MB but real mode code needs to be <1 MB
-;
-[SECTION .boot_seg_ap]
+; this is real-mode code
+[SECTION .boot_seg_ap exec]
 
 ; Variables need to be modified during code relocation in 'bootbp.asm' 
 [GLOBAL gdt_ap]
@@ -58,7 +55,7 @@ boot_ap:
 
 ; GDT for application processors (will be replaced later)
 ; Attentation: This GDT is in the segment '.boot_seg_ap' because it 
-; will be copied below 1 MB during code relocation
+; is needed in real-mode
 align 4
 
 gdt_ap:

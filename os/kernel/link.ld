@@ -1,6 +1,25 @@
 ENTRY(start)
 
 SECTIONS {
+
+    /*
+     * start code for the application processors
+     *
+     * Since they start in real mode, this needs to be below 640KB.
+     * It also can't be at 0, because that's the null pointer.
+     * It also has to be at the beginning of a page, because it's a real-mode
+     * segment times 256, so choose the second possible one.
+     * (4K and 636K reset for some reason.)
+     */
+    . = 8K;
+	.boot_seg_ap :
+	{
+        ___BOOT_AP_START__ = .;
+        *(".boot_seg_ap")
+        *(".boot_seg_ap$")
+        ___BOOT_AP_END__ = .;
+	}
+
     /*
      * load the kernel to the following address
      *
@@ -20,15 +39,6 @@ SECTIONS {
         /* ensure that the multiboot header is at the beginning */
         *(.multiboot2_sec)
     }
-
-    /* Startcode fuer die APs, wird von System::init() reloziert */
-	.boot_seg_ap ALIGN(0x10) :
-	{
-		___BOOT_AP_START__ = .;
-		*(".boot_seg_ap")
-		*(".boot_seg_ap$")
-	}
-	___BOOT_AP_END__ = .;
 
     .text ALIGN (4K) :
     {

@@ -189,8 +189,7 @@ pub unsafe fn send(val: u64) {
 
 #[allow(unused_assignments)]
 pub fn send_init() {
-	let mut icr = InterruptCommand::new();
-	icr = read_icr_register();
+	let mut icr = read_icr_register();
 				
 	icr.set_vector(0);
 	icr.set_delivery_mode(IpiDeliveryMode::Init as u8);
@@ -204,8 +203,7 @@ pub fn send_init() {
 		
 #[allow(unused_assignments)]
 pub fn send_startup(vector: u8) {
-	let mut icr = InterruptCommand::new();
-	icr = read_icr_register();
+	let mut icr = read_icr_register();
 	
 	icr.set_vector(vector);
 	icr.set_delivery_mode(IpiDeliveryMode::Startup as u8);

@@ -32,10 +32,6 @@ global start_asm
 ; Constants
 ;
 
-; Address of boot code for application processors
-; Also defined in 'consts.rs'. Must be consistent!
-RELOCATE_BOOT_CODE: equ 0x40000
-
 ; Stack
 STACK_MEM_SIZE: equ  65536	; total size of all stacks
 STACK_SIZE_ONE: equ 4096		; stack size of one processor
@@ -62,10 +58,6 @@ pagetable_end:  equ 0x200000
 ; In 'boot.asm', benoetigt beim Umkopieren dieses Boot-Codes fuer die APs
 [EXTERN gdt_ap]
 [EXTERN gdtd_ap]
-
-[GLOBAL copy_boot_code] ; wird in 'startup.rs' benoetigt
-[GLOBAL RELOCATE_BOOT_CODE] ; wird in 'startup.rs' benoetigt
-
 
 [SECTION .text]
 
@@ -212,42 +204,7 @@ end:
 	; We should never end up here
     cli
     mov dword [0xb8000], 0x2f2a2f2a
-	hlt
-
-
-
-;
-; This function is called from 'startup.rs' gerufen for relocating the
-; boot code in 'boot_ap.asm' for the application processors below 1 MB
-; Necessary because the application processors start in real mode
-;
-copy_boot_code:
-	mov rax, RELOCATE_BOOT_CODE
-	mov rbx, ___BOOT_AP_START__   ; = 0x100020
-	mov rcx, ___BOOT_AP_END__     ; = 0x100076
-copyc:
-	mov rdx, [rbx]    ; load qword from source
-	mov [rax], rdx    ; write qword to destination
-	add rbx, 8        ; next qword of source 
-	add rax, 8        ; next qword of destination 
-	cmp rbx, rcx      ; check if end is reached
-	jle copyc
-
-	; Adresse von 'gdt_ap' im kopierten Code
-	mov rbx, gdt_ap
-	sub rbx, ___BOOT_AP_START__
-    add rbx, RELOCATE_BOOT_CODE
-    
-	; Adresse von 'gdtd_ap' im kopierten Code
-	mov rax, gdtd_ap
-	sub rax, ___BOOT_AP_START__
-    add rax, RELOCATE_BOOT_CODE
-    add rax, 2     ; skip 'limit'
-
-    ; Aktualisieren von 'gdtd_ap' im kopierten Code
-    mov [eax], ebx
-	ret
-	
+	hlt	
 
 ;	
 ;  Memory for page tables
