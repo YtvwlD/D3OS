@@ -229,9 +229,6 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     info!("Enabling interrupts");
     interrupts::enable();
 
-    // Initialize AP's
-    start_ap_processors();
-
     // Initialize EFI runtime service (if available and not done already during memory initialization)
     if uefi::table::system_table_raw().is_none() {
         match multiboot.efi_sdt64_tag() {
@@ -348,6 +345,9 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
         },
         "cleanup",
     ));
+
+    // Initialize AP's
+    start_ap_processors();
 
     // Create and register the 'shell' thread (from app image in ramdisk) in the scheduler
     scheduler().ready(Thread::load_application(
@@ -667,6 +667,7 @@ fn start_ap_processors() {
 #[unsafe(no_mangle)]
 pub extern fn startup_ap() {
     //info!("    Application processor executing 'startup_ap'");
+    scheduler().add_cpu();
 
 
     loop{}

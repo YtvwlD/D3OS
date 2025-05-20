@@ -12,7 +12,7 @@ use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::ptr;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use core::sync::atomic::Ordering::Relaxed;
 use smallmap::Map;
 use spin::{Mutex, MutexGuard};
@@ -46,6 +46,7 @@ pub struct Scheduler {
     ready_state: Mutex<ReadyState>,
     sleep_list: Mutex<Vec<(Arc<Thread>, usize)>>,
     join_map: Mutex<Map<usize, Vec<Arc<Thread>>>>, // manage which threads are waiting for a thread-id to terminate
+    active_cpus: AtomicU8,
 }
 
 unsafe impl Send for Scheduler {}
@@ -65,12 +66,23 @@ impl Scheduler {
             ready_state: Mutex::new(ReadyState::new()),
             sleep_list: Mutex::new(Vec::new()),
             join_map: Mutex::new(Map::new()),
+            active_cpus: AtomicU8::new(1),
         }
     }
 
     /// Description: Called during creation of threads
     pub fn set_init(&self) {
         self.get_ready_state().initialized = true;
+    }
+
+    /// Get the number of running CPUs.
+    pub fn active_cpus(&self) -> u8 {
+        self.active_cpus.load(Ordering::Relaxed)
+    }
+
+    /// Add one CPU.
+    pub fn add_cpu(&self) {
+        self.active_cpus.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn active_thread_ids(&self) -> Vec<usize> {
