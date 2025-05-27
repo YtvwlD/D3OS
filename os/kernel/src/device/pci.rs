@@ -94,6 +94,12 @@ impl PciBus {
         &self.config_space
     }
 
+    pub fn search_by_vendor_id(&self, vendor_id: u16) -> Vec<&RwLock<EndpointHeader>> {
+        self.devices.iter()
+            .filter(|device| device.read().header().id(self.config_space()).0 == vendor_id)
+            .collect()
+    }
+
     pub fn search_by_ids(&self, vendor_id: u16, device_id: u16) -> Vec<&RwLock<EndpointHeader>> {
         self.devices.iter()
             .filter(|device| device.read().header().id(self.config_space()) == (vendor_id, device_id))

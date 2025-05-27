@@ -40,6 +40,7 @@ bitflags = "2.9.0"
 smoltcp = { version = "0.12.0", default-features = false, features = ["alloc", "log", "medium-ethernet", "proto-ipv4", "socket-udp"] }
 mbrs = { version = "0.3.1", default-features = false, features = ["no-std"] }
 num_enum = { version = "0.7.3", default-features = false }
+virtio-drivers = { version = "0.11", features = ["alloc"] }
 
 [build-dependencies]
 built = { version = "0.7.7", features = ["chrono", "git2"] }
