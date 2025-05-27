@@ -10,7 +10,7 @@
 
 use crate::device::pit::Timer;
 use crate::device::ps2::Keyboard;
-use crate::device::qemu_cfg;
+use crate::device::{qemu_cfg, virtio};
 use crate::device::serial::SerialPort;
 use crate::interrupt::interrupt_dispatcher;
 use crate::memory::frames;
@@ -343,6 +343,9 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
             }
         }
     }
+
+    // Initialize virtio devices
+    virtio::init();
 
     // Init naming service
     naming::api::init();
