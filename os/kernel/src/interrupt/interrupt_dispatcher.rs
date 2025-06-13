@@ -196,7 +196,7 @@ pub fn setup_idt() {
         // We know, that it has a static lifetime, since it is are declared as a static variable in 'kernel/mod.rs'.
         // However, since it is hidden behind a Mutex, the borrow checker does not see it with a static lifetime.
         let idt_ref = ptr::from_ref(idt.deref()).as_ref().unwrap();
-        idt_ref.load();
+        idt_ref.load(); //hier, das machen
     }
 }
 
