@@ -14,9 +14,9 @@
 #![feature(fmt_internals)]
 #![feature(abi_x86_interrupt)]
 #![feature(trait_upcasting)]
-#![feature(core_intrinsics)]
 #![feature(ptr_metadata)]
 #![feature(let_chains)]
+#![feature(core_intrinsics)]
 #![allow(internal_features)]
 #![no_std]
 
@@ -66,6 +66,7 @@ pub mod consts;
 pub mod naming;
 pub mod network;
 pub mod storage;
+pub mod ipi;
 
 pub mod built_info {
     // The file has been placed there by the build script.

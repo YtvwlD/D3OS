@@ -26,7 +26,7 @@
 ;* Autor:           Michael Schoettner, Univ. Duesseldorf, 25.8.2022  *
 ;**********************************************************************
 
-global startup
+global start_asm
 
 ;
 ; Constants
@@ -38,7 +38,7 @@ RELOCATE_BOOT_CODE: equ 0x40000
 
 ; Stack
 STACK_MEM_SIZE: equ  65536	; total size of all stacks
-STACK_SIZE: equ 4096		; stack size of one processor
+STACK_SIZE_ONE: equ 4096		; stack size of one processor
 
 ; 254 GB max. supported DRAM size by paging tables
 MAX_MEM: equ 254
@@ -52,14 +52,14 @@ pagetable_start:  equ 0x103000
 pagetable_end:  equ 0x200000
 
 ; In 'interrupts.asm'
-; [EXTERN setup_idt]
-; [EXTERN reprogram_pics]
+[EXTERN setup_idt]
+[EXTERN reprogram_pics]
 
 ; In 'linker.ld'
-[EXTERN ___BOOT_AP_START__]
-[EXTERN ___BOOT_AP_END__]
+[EXTERN ___BOOT_AP_START__]     
+[EXTERN ___BOOT_AP_END__]     
 
-; In 'boot.asm', benoetigt beim Umkopieren dieses Boot-Codes fuer die APs           (technically in boot_ap.asm)
+; In 'boot.asm', benoetigt beim Umkopieren dieses Boot-Codes fuer die APs
 [EXTERN gdt_ap]
 [EXTERN gdtd_ap]
 
@@ -70,14 +70,14 @@ pagetable_end:  equ 0x200000
 [SECTION .text]
 
 ;
-; 32 bit entry function for bootstrap processor and later called by
+; 32 bit entry function for bootstrap processor and later called by 
 ; application processors from 'boot_ap.asm'
 ; Sets up GDT and a stack
 ;
 [BITS 32]
-startup:
+start_asm:
 	cld              ; required by GCC; Rust?
-	cli
+	cli              
 	lgdt   [gdt_80]  ; load GDT
 
 	; Set segment registers
@@ -89,10 +89,10 @@ startup:
 	mov    ss, ax
 
 	; Init stack
-	mov    eax, STACK_SIZE
+	mov    eax, STACK_SIZE_ONE
 	lock xadd [stack_mem_ptr], eax
 	; Stack grows downwards, thus we need to add STACK_SIZE again
-	add eax, STACK_SIZE
+	add eax, STACK_SIZE_ONE
 	mov    esp, eax
 
 	jmp    init_longmode
@@ -123,7 +123,7 @@ init_longmode:
 	mov    cr0, eax
 
 	; Jump to 64 bit code segment (activates full long mode)
-	jmp    2 * 0x8 : longmode_start_ap
+	jmp    2 * 0x8 : longmode_start
 
 
 ;
@@ -183,23 +183,24 @@ fill_tables3_done:
 ;
 longmode_start:
 [BITS 64]
-	; call   setup_idt
+	call   setup_idt
 
 	; Pruefen, ob es sich um den Bootstrap-Core oder einen weiteren 
 	; Application-Core handelt
-	mov eax, [is_bootstrap]
-	cmp eax, 0
-	jne longmode_start_ap
+	;mov eax, [is_bootstrap]
+	;cmp eax, 0
+	;jne longmode_start_ap
+	jmp longmode_start_ap
 
 	mov rax, is_bootstrap
 	mov dword [rax], 1
 	
 	; Init PICs
-	; call   reprogram_pics
+	;call   reprogram_pics
 
     ; Call Rust entry function in 'startup.rs' for bootstrap processor
-    ; extern startup
-    ; call startup
+    ;extern startup
+    ;call startup
 	jmp end
 
 longmode_start_ap:

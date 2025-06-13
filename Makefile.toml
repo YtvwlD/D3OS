@@ -15,12 +15,13 @@ alias = "qemu"
 
 [tasks.qemu]
 command = "qemu-system-x86_64"
-dependencies = [ "image", "hdd" ]
+dependencies = [ "image", "hdd", "ovmf"]
 args = [
     # Base machine configuration
     "-machine", "q35,nvdimm=on,pcspk-audiodev=audio0",
     "-m", "256M,slots=2,maxmem=1G",
     "-cpu", "qemu64",
+    "-smp", "4",  # Use 4 CPU cores
     "-bios", "RELEASEX64_OVMF.fd",
     "-boot", "d",
     "-vga", "std",
@@ -55,6 +56,7 @@ args = [
     "-machine", "q35,nvdimm=on,pcspk-audiodev=audio0",
     "-m", "128M,slots=2,maxmem=1G",
     "-cpu", "qemu64",
+    "-smp", "4",  # Use 4 CPU cores
     "-bios", "RELEASEX64_OVMF.fd",
     "-boot", "c",
     "-vga", "std",
@@ -87,7 +89,7 @@ args = [
 [tasks.debug-signal-vscode]
 command = "echo"
 args = [ "Ready to debug" ]
-dependencies = [ "image", "hdd" ]
+dependencies = [ "image", "hdd", "ovmf"]
 
 [tasks.ovmf]
 command = "wget"

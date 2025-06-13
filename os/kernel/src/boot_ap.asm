@@ -29,7 +29,7 @@
 [GLOBAL gdtd_ap]
 
 ; Entry function of bootstrap processor in 'boot_bp.asm'
-[EXTERN startup]
+[EXTERN start_asm]
 
  
 ; 'boot_ap' is the entry function for all application processors
@@ -97,7 +97,7 @@ boot_ap32:
 	mov ss, ax
 
 	; In 'boot_bp.asm"
-	; jmp startup
+	jmp start_asm
 	
     ; print `**` to screen
     ; should never been reached

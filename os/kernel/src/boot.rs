@@ -9,7 +9,7 @@
 */
 
 use crate::interrupt::interrupt_dispatcher;
-use crate::{naming, efi_services_available, storage};
+use crate::{naming, efi_services_available, storage, ipi};
 use crate::syscall::syscall_dispatcher;
 use crate::process::thread::Thread;
 use alloc::format;
@@ -53,14 +53,14 @@ use crate::memory::{MemorySpace, nvmem, PAGE_SIZE};
 use crate::memory::nvmem::Nfit;
 use crate::memory::r#virtual::page_table_index;
 use crate::network::rtl8139;
-use crate::device::{ipi};
-use crate::interrupt::interrupt_dispatcher::setup_idt;
 
 // import labels from linker script 'link.ld'
 unsafe extern "C" {
     static ___KERNEL_DATA_START__: u64; // start address of OS image
     static ___KERNEL_DATA_END__: u64;   // end address of OS image
 }
+
+const RELOCATE_BOOT_CODE: u64 = 0x40000;
 
 const INIT_HEAP_PAGES: usize = 0x400;   // number of heap pages for booting the OS
 
@@ -166,12 +166,12 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     let timer = timer();
     Timer::plugin(Arc::clone(&timer));
 
-    //TO-DO: boot ap-Cores
-    start_ap_processors();
-
     // Enable interrupts
     info!("Enabling interrupts");
     interrupts::enable();
+
+    // Initialize AP's
+    start_ap_processors();
 
     // Initialize EFI runtime service (if available and not done already during memory initialization)
     if uefi::table::system_table_raw().is_none() {
@@ -499,9 +499,9 @@ fn unprotect_frame(frame: PhysFrame, root_level: usize) {
     }
 }
 
-
 // Assembly function for relocating boot code for application cores
 unsafe extern "C" { fn copy_boot_code(); }
+
 fn start_ap_processors() {
 
     info!("Booting AP cores");
@@ -512,14 +512,15 @@ fn start_ap_processors() {
     ipi::send_init();
 
     // min 10ms (10000) warten
-    timer().wait(1000);
+    timer().wait(10000);
 
     // The vector is the startup address for the boot code
-    let vector = ((0x40000 as u64) >> 12) as u32;
+    let vector = (RELOCATE_BOOT_CODE >> 12) as u32;
 
     info!("   Sending STARTUP IPI #1");
     ipi::send_startup(vector as u8);
 }
+
 
 
 //
@@ -530,11 +531,23 @@ fn start_ap_processors() {
 pub extern fn startup_ap() {
     info!("    Application processor executing 'startup_ap'");
 
-    loop{}
+    loop{
+        //timer().wait(1000);
+        //info!("    Application processor still running..");
+    }
 }
-
 #[unsafe(no_mangle)]
-pub extern fn setupIdt() {
-    info!("    Setting up IDT for AP");
-    setup_idt();
+pub extern fn setup_idt() {
+    //cr3 setzen für rust (crate readcr3)
+    //vom bp laden?? ist im code schon hinterlegt idt.ref.load? auf anderen kernen benutzen
+    //interrupts deaktivieren davor (paging)
+    //shared Nothing arcitektur nachkucken - wollen wir auf jeden Fall
+    //eigene queue für jeden core
+    //gibt es scheduler mit sharedAll?? nachkucken (einen gobalen scheduler - linux?
+    //barrelfish nochmal nachlesen
+    //linux earliest elidgeble virtual deadline first nachkucken
+    //was ist die letzte
+    //neuester Stand D3OS
+    info!("    Initializing IDT for AP");
+    interrupt_dispatcher::setup_idt();
 }

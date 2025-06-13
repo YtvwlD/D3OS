@@ -42,6 +42,7 @@ impl ProcessManager {
                 Arc::new(address_space)
             }
         };
+        //pagefault? gleicher physischer speicher, kein gemeinsamer buffer
 
         let process = Arc::new(Process::new(address_space));
         self.active_processes.push(Arc::clone(&process));

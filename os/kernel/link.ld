@@ -8,17 +8,18 @@ SECTIONS {
     .boot :
     {
         /* ensure that the multiboot header is at the beginning */
-        *(.multiboot2_header)
+        *(.multiboot2_sec)
     }
 
     /* Startcode fuer die APs, wird von System::init() reloziert */
 	.boot_seg_ap ALIGN(0x10) :
 	{
-	    ___BOOT_AP_START__ = .;
+		___BOOT_AP_START__ = .;
 		*(".boot_seg_ap")
 		*(".boot_seg_ap$")
 	}
 	___BOOT_AP_END__ = .;
+
 
     .text :
     {
