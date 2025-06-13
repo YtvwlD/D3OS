@@ -1,8 +1,15 @@
-pub mod alloc;
-pub mod physical;
-pub mod r#virtual;
+pub mod vmm;
+pub mod vma;
+pub mod pages;
+pub mod frames;
+
 pub mod nvmem;
 
+pub mod heap;
+pub mod stack;
+pub mod acpi_handler;
+
+#[derive(PartialEq)]
 #[derive(Clone, Copy)]
 pub enum MemorySpace {
     Kernel,

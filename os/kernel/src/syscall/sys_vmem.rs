@@ -3,26 +3,39 @@
    ╟─────────────────────────────────────────────────────────────────────────╢
    ║ Descr.: All system calls related to virtual memory management.          ║
    ╟─────────────────────────────────────────────────────────────────────────╢
-   ║ Author: Fabian Ruhland & Michael Schoettner, 30.8.2024, HHU             ║
+   ║ Author: Fabian Ruhland & Michael Schoettner, 24.5.2025, HHU             ║
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
 
-use crate::memory::r#virtual::{VirtualMemoryArea, VmaType};
+use x86_64::VirtAddr;
+use x86_64::structures::paging::Page;
+
+use crate::memory::vma::VmaType;
 use crate::memory::{MemorySpace, PAGE_SIZE};
 use crate::process_manager;
-use x86_64::structures::paging::PageTableFlags;
+use syscall::return_vals::Errno;
 
-
-pub fn sys_map_user_heap(size: usize) -> isize {
+/// Map memory to a process.
+///
+/// This just sets up the VMA, no page tables are created yet.
+/// This happens later on on page faults.
+pub fn sys_map_memory(start: usize, size: usize) -> isize {
     let process = process_manager().read().current_process();
-    let code_areas = process.find_vmas(VmaType::Code);
-    let code_area = code_areas.get(0).expect("Process does not have code area!");
-    let heap_start = code_area.end().align_up(PAGE_SIZE as u64);
-    let heap_area = VirtualMemoryArea::from_address(heap_start, size, VmaType::Heap);
 
-    process.address_space().map(heap_area.range(), MemorySpace::User, PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE);
-    process.add_vma(heap_area);
+    let start_addr = VirtAddr::new(start.try_into().unwrap());
+    let start_page = Page::containing_address(start_addr);
+    let num_pages = size.div_ceil(PAGE_SIZE);
 
-    heap_start.as_u64() as isize
+    let vma = process.virtual_address_space.alloc_vma(
+        Some(start_page),
+        num_pages as u64,
+        MemorySpace::User,
+        VmaType::Heap,
+        "heap",
+    );
+    if vma.is_none() {
+        Errno::EUNKN as isize
+    } else {
+        0
+    }
 }
-
