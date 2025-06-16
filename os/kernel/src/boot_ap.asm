@@ -95,6 +95,7 @@ boot_ap32:
 	mov fs, ax
 	mov gs, ax
 	mov ss, ax
+	;hlt
 
 	; In 'boot_bp.asm"
 	jmp start_asm
