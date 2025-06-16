@@ -69,6 +69,8 @@ unsafe extern "C" {
     static ___KERNEL_DATA_END__: u64; // end address of OS image
 }
 
+const RELOCATE_BOOT_CODE: u64 = 0x40000;
+
 const INIT_HEAP_PAGES: usize = 0x400; // number of heap pages for booting the OS
 
 /// First Rust function called from assembly code `boot.asm` \
@@ -250,9 +252,6 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     info!("Enabling interrupts");
     interrupts::enable();
 
-    // Initialize AP's
-    start_ap_processors();
-
     // Initialize EFI runtime service (if available and not done already during memory initialization)
     if uefi::table::system_table_raw().is_none() {
         match multiboot.efi_sdt64_tag() {
@@ -405,6 +404,9 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     // Start APIC timer & scheduler
     info!("Starting scheduler");
     apic().start_timer(10);
+
+    // Initialize AP's
+    start_ap_processors();
 
     scheduler().start();
 }
@@ -667,7 +669,7 @@ fn start_ap_processors() {
 //
 #[unsafe(no_mangle)]
 pub extern fn startup_ap() {
-    info!("    Application processor executing 'startup_ap'");
+    //info!("    Application processor executing 'startup_ap'");
 
     loop{
         //timer().wait(1000);
