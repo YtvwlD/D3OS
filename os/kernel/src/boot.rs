@@ -651,7 +651,7 @@ fn start_ap_processors() {
     // Sende Init-IPI an alle APs
     ipi::send_init();
 
-    // min 10ms (10000) warten
+    // min 10s (10000) warten
     timer().wait(10000);
 
     // The vector is the startup address for the boot code
@@ -672,8 +672,8 @@ pub extern fn startup_ap() {
     //info!("    Application processor executing 'startup_ap'");
 
     loop{
-        //timer().wait(1000);
-        //info!("    Application processor still running..");
+        timer().wait(1000);
+        info!("    Application processor still running.."); //also crashes
     }
 }
 #[unsafe(no_mangle)]
@@ -688,6 +688,6 @@ pub extern fn setup_idt() {
     //linux earliest elidgeble virtual deadline first nachkucken
     //was ist die letzte
     //neuester Stand D3OS
-    info!("    Initializing IDT for AP");
-    interrupt_dispatcher::setup_idt();
+    //info!("    Initializing IDT for AP");
+    interrupt_dispatcher::setup_idt(); //crashes now
 }
