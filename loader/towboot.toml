@@ -1,6 +1,6 @@
 default = "d3os"
 timeout = 0
-log_level = "info"
+log_level = "debug"
 
 [entries]
   [entries.d3os]
