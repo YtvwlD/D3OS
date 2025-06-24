@@ -247,6 +247,8 @@ impl Transport for &VirtioPci {
     }
 
     fn set_status(&mut self, status: DeviceStatus) {
+        //
+        self.common_cfg.unwrap_io()
         todo!()
     }
 
@@ -299,6 +301,28 @@ impl Transport for &VirtioPci {
     ) -> virtio_drivers::Result<()> {
         todo!()
     }
+}
+
+#[repr(C)]
+pub(crate) struct CommonCfg {
+    // TODO: is this applicable for I/O?
+    pub device_feature_select: ReadPureWrite<u32>,
+    pub device_feature: ReadPure<u32>,
+    pub driver_feature_select: ReadPureWrite<u32>,
+    pub driver_feature: ReadPureWrite<u32>,
+    pub msix_config: ReadPureWrite<u16>,
+    pub num_queues: ReadPure<u16>,
+    // shouldn't this be at +0x12
+    pub device_status: ReadPureWrite<u8>,
+    pub config_generation: ReadPure<u8>,
+    pub queue_select: ReadPureWrite<u16>,
+    pub queue_size: ReadPureWrite<u16>,
+    pub queue_msix_vector: ReadPureWrite<u16>,
+    pub queue_enable: ReadPureWrite<u16>,
+    pub queue_notify_off: ReadPureWrite<u16>,
+    pub queue_desc: ReadPureWrite<u64>,
+    pub queue_driver: ReadPureWrite<u64>,
+    pub queue_device: ReadPureWrite<u64>,
 }
 
 // taken from virtio_drivers::transport::pci
