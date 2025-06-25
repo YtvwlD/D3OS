@@ -91,6 +91,14 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
 
     // Search memory map, provided by bootloader or EFI, for usable memory and initialize physical memory management with free memory regions
     let multiboot = multiboot2_search_memory_map(multiboot2_addr);
+    let multiboot_region = PhysFrameRange {
+        start: PhysFrame::containing_address(PhysAddr::new(
+            multiboot.start_address().try_into().unwrap(),
+        )),
+        end: PhysFrame::containing_address(PhysAddr::new(
+            multiboot.end_address().try_into().unwrap(),
+        )),
+    };
 
     // Setup the GDT (Global Descriptor Table)
     // Has to be done after EFI boot services have been exited, since they rely on their own GDT
@@ -123,8 +131,8 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     // Create kernel process (and initialize virtual memory management)
     info!("Create kernel process and initialize paging");
     let kernel_process = process_manager().write().create_process();
-    // TODO: adjust this when removing 1:1 mapping
-    kernel_process
+    // TODO: adjust this, so that it's not mapped 1:1
+    let heap_vma = kernel_process
         .virtual_address_space
         .alloc_vma(
             Some(
@@ -137,8 +145,16 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
             "heap",
         )
         .expect("failed to create VMA for kernel heap");
-    // TODO: stack is part of BSS, which is part of code
     kernel_process
+        .virtual_address_space
+        .map_pfr_for_vma(
+            &heap_vma,
+            heap_region,
+            PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE,
+        )
+        .expect("failed to map VMA for kernel heap");
+    // TODO: stack is part of BSS, which is part of code
+    let code_vma = kernel_process
         .virtual_address_space
         .alloc_vma(
             Some(
@@ -153,6 +169,34 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
             "code",
         )
         .expect("failed to create VMA for kernel code");
+    // TODO: don't make this writable
+    kernel_process
+        .virtual_address_space
+        .map_pfr_for_vma(
+            &code_vma,
+            image_region,
+            PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
+        )
+        .expect("failed to map VMA for kernel code");
+    let multiboot_vma = kernel_process
+        .virtual_address_space
+        .alloc_vma(
+            Some(
+                Page::from_start_address(VirtAddr::new(
+                    multiboot_region.start.start_address().as_u64(),
+                ))
+                .unwrap(),
+            ),
+            multiboot_region.len(),
+            MemorySpace::Kernel,
+            VmaType::Environment,
+            "multiboot",
+        )
+        .expect("failed to create VMA for Multiboot info");
+    kernel_process
+        .virtual_address_space
+        .map_pfr_for_vma(&multiboot_vma, multiboot_region, PageTableFlags::PRESENT)
+        .expect("failed to map VMA for Multiboot");
     kernel_process.dump();
     kernel_process.virtual_address_space.load_address_space();
 
