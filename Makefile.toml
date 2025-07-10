@@ -14,9 +14,10 @@ alias = "qemu"
 # Run tasks
 
 [tasks.qemu]
-command = "qemu-system-x86_64"
+command = "qemu-system-x86_64" #"qemu-system-x86_64" "host-spawn"
 dependencies = [ "image", "hdd", "ovmf"]
 args = [
+    #"qemu-system-x86_64",
     # Base machine configuration
     "-machine", "q35,nvdimm=on,pcspk-audiodev=audio0",
     "-m", "256M,slots=2,maxmem=1G",
@@ -49,9 +50,10 @@ args = [
 ]
 
 [tasks.debug]
-command = "qemu-system-x86_64"
+command = "host-spawn" #"qemu-system-x86_64"
 dependencies = [ "debug-signal-vscode" ]
 args = [
+    "qemu-system-x86_64",
     # Base machine configuration
     "-machine", "q35,nvdimm=on,pcspk-audiodev=audio0",
     "-m", "256M,slots=2,maxmem=1G",

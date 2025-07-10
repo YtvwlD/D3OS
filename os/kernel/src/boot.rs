@@ -263,6 +263,9 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
         }
     }
 
+    // Initialize AP's
+    start_ap_processors();
+
     // Dump information about EFI runtime service
     info!(
         "EFI runtime services available (Vendor: [{}], UEFI version: [{}])",
@@ -277,6 +280,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     }
 
     // Enable serial port interrupts
+    info!("Initializing Serial Port");
     if let Some(serial) = serial_port() {
         SerialPort::plugin(serial);
     }
@@ -404,9 +408,6 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     // Start APIC timer & scheduler
     info!("Starting scheduler");
     apic().start_timer(10);
-
-    // Initialize AP's
-    start_ap_processors();
 
     scheduler().start();
 }
