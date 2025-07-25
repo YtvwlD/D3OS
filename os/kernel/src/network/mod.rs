@@ -1,18 +1,20 @@
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use smoltcp::phy::{Loopback, Medium};
 use core::ops::Deref;
 use core::ptr;
 use log::info;
 use smoltcp::iface::{self, Interface, SocketHandle, SocketSet};
 use smoltcp::socket::{dhcpv4, icmp, tcp, udp, Socket};
 use smoltcp::time::Instant;
-use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr};
+use smoltcp::wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr};
 use spin::{Once, RwLock};
 use crate::device::rtl8139::Rtl8139;
 use crate::{pci_bus, scheduler, timer};
 use crate::process::thread::Thread;
 
+static LOOPBACK: Once<Arc<Loopback>> = Once::new();
 static RTL8139: Once<Arc<Rtl8139>> = Once::new();
 
 static INTERFACES: RwLock<Vec<Interface>> = RwLock::new(Vec::new());
@@ -28,6 +30,7 @@ pub enum SocketType {
 pub fn init() {
     SOCKETS.call_once(|| RwLock::new(SocketSet::new(Vec::new())));
 
+    // first, search for any real devices
     let devices = pci_bus().search_by_ids(0x10ec, 0x8139);
     if !devices.is_empty() {
         RTL8139.call_once(|| {
@@ -36,38 +39,59 @@ pub fn init() {
             info!("RTL8139 MAC address: [{}]", rtl8139.read_mac_address());
 
             Rtl8139::plugin(Arc::clone(&rtl8139));
+            
+            // Set up network interface
+            let time = timer().systime_ms();
+            let mut conf = iface::Config::new(HardwareAddress::from(rtl8139.read_mac_address()));
+            conf.random_seed = time as u64;
+
+            // The Smoltcp interface struct wants a mutable reference to the device.
+            // However, the RTL8139 driver is designed to work with shared references.
+            // Since smoltcp does not actually store the mutable reference anywhere,
+            // we can safely cast the shared reference to a mutable one.
+            // (Actually, I am not sure why the smoltcp interface wants a mutable reference to the device,
+            // since it does not modify the device itself.)
+            let device = unsafe { ptr::from_ref(rtl8139.deref()).cast_mut().as_mut().unwrap() };
+            add_interface(Interface::new(
+                conf, device, Instant::from_millis(time as i64)
+            ));
+
+            // request an IP address via DHCP
+            let dhcp_socket = dhcpv4::Socket::new();
+            SOCKETS
+                .get()
+                .expect("Socket set not initialized!")
+                .write()
+                .add(dhcp_socket);
             rtl8139
         });
-    }
 
-    if let Some(rtl8139) = RTL8139.get() {
         extern "sysv64" fn poll() {
             loop { poll_sockets(); }
         }
-        scheduler().ready(Thread::new_kernel_thread(poll, "RTL8139"));
-        
-        // Set up network interface
-        let time = timer().systime_ms();
-        let mut conf = iface::Config::new(HardwareAddress::from(rtl8139.read_mac_address()));
-        conf.random_seed = time as u64;
-
-        // The Smoltcp interface struct wants a mutable reference to the device.
-        // However, the RTL8139 driver is designed to work with shared references.
-        // Since smoltcp does not actually store the mutable reference anywhere,
-        // we can safely cast the shared reference to a mutable one.
-        // (Actually, I am not sure why the smoltcp interface wants a mutable reference to the device,
-        // since it does not modify the device itself.)
-        let device = unsafe { ptr::from_ref(rtl8139.deref()).cast_mut().as_mut().unwrap() };
-        add_interface(Interface::new(conf, device, Instant::from_millis(time as i64)));
-
-        // request an IP address via DHCP
-        let dhcp_socket = dhcpv4::Socket::new();
-        SOCKETS
-            .get()
-            .expect("Socket set not initialized!")
-            .write()
-            .add(dhcp_socket);
+        scheduler().ready(Thread::new_kernel_thread(poll, "network"));
     }
+
+    // then, setup loopback
+    // this is based on https://github.com/smoltcp-rs/smoltcp/blob/main/examples/loopback.rs
+    LOOPBACK.call_once(|| {
+        info!("setting up loopback");
+        // TODO: do we really need to wrap this in ethernet frames? IP should be enough
+        let mut loopback = Loopback::new(Medium::Ethernet);
+        let time = timer().systime_ms();
+        let mut conf = iface::Config::new(EthernetAddress([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]).into());
+        conf.random_seed = time.try_into().unwrap();
+        let mut interface = Interface::new(
+            conf, &mut loopback, Instant::from_millis(time as i64)
+        );
+        interface.update_ip_addrs(|ip_addrs| {
+            ip_addrs
+                .push(IpCidr::new(IpAddress::v4(127, 0, 0, 1), 8))
+                .unwrap();
+        });
+        add_interface(interface);
+        loopback.into()
+    });
 }
 
 fn add_interface(interface: Interface) {
