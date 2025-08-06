@@ -5,11 +5,11 @@ use alloc::vec::Vec;
 use smoltcp::phy::{Device, Loopback, Medium};
 use smoltcp::socket::dns::GetQueryResultError;
 use core::net::{Ipv4Addr, Ipv6Addr};
-use core::ops::Deref;
+use core::ops::{Deref, DerefMut};
 use core::ptr;
 use log::{info, warn};
-use smoltcp::iface::{self, Interface, PollResult, SocketHandle, SocketSet};
-use smoltcp::socket::{dhcpv4, dns, icmp, tcp, udp};
+use smoltcp::iface::{self, Interface, PollIngressSingleResult, PollResult, SocketHandle, SocketSet};
+use smoltcp::socket::{dhcpv4, dns, icmp, tcp, udp, AnySocket, Socket};
 use smoltcp::time::Instant;
 use smoltcp::wire::{DnsQueryType, EthernetAddress, HardwareAddress, IpAddress, IpCidr, IpEndpoint};
 use spin::{Once, RwLock, RwLockWriteGuard};
@@ -42,18 +42,118 @@ enum NetworkDevice {
 }
 
 impl NetworkDevice {
-    /// Poll this network device.
+    /// Poll this network device for incoming and outgoing packets
     fn poll(
         &mut self, iface: &mut Interface, time: Instant,
         sockets: &mut RwLockWriteGuard<'_, SocketSet>,
+    ) {
+        // first, check for incoming packets
+        // this is relatively simple: just accept everything from everywhere
+        // TODO: make sure that the packets were received on the correct interface
+        loop {
+            if self.poll_ingress(iface, time, sockets.deref_mut()) == PollIngressSingleResult::None {
+                break;
+            }
+        }
+
+        // then, send outgoing packets
+        // this is a bit tricky, because they need to be sent on the correct interface
+
+        // at this point, we have a write lock on the sockets,
+        // so we can remove anything from there temporarily,
+        // as long as we add it back in the same order,
+        // so that the handles stay the same
+        let mut temp_set = SocketSet::new(Vec::new());
+        // go through all sockets and check whether they are bound to this interface
+        loop {
+            if let Some((handle, _ref)) = sockets.iter().next() {
+                let sock = sockets.remove(handle);
+                // if the socket is bound to this interface, transmit
+                // else, just put it back
+                let sock = if match sock {
+                    smoltcp::socket::Socket::Icmp(socket) => todo!(),
+                    smoltcp::socket::Socket::Udp(socket) => {
+                        // check if the local endpoint of this socket is on this interface
+                        let ep = socket.endpoint();
+                        if let Some(addr) = ep.addr {
+                            iface.has_ip_addr(addr)
+                        } else {
+                            // listening on ::
+                            true
+                        }
+                    },
+                    smoltcp::socket::Socket::Tcp(socket) => {
+                        // check if the local endpoint of this socket is on this interface
+                        // if there's no endpoint, there is nothing to send
+                        if let Some(ep) = socket.local_endpoint() {
+                            iface.has_ip_addr(ep.addr)
+                        } else {
+                            false
+                        }
+                    },
+                    // don't send dhcp or dns on loopback
+                    smoltcp::socket::Socket::Dhcpv4(socket) => !self.is_loopback(),
+                    smoltcp::socket::Socket::Dns(socket) => !self.is_loopback(),
+                } {
+                    self.send_socket(iface, time, sock)
+                } else {
+                    sock
+                };
+                temp_set.add(sock.into());
+            } else {
+                // we're done
+                break
+            }
+        }
+        // move them back
+        loop {
+            if let Some((handle, _ref)) = temp_set.iter().next() {
+                let sock = sockets.remove(handle);
+                sockets.add(sock.into());
+            } else {
+                // we're done
+                break
+            }
+        }
+    }
+
+    /// Send pending packets of a single socket.
+    fn send_socket<'a, T: AnySocket<'a>>(&mut self, iface: &mut Interface, time: Instant, sock: T) -> T {
+        let mut single_set = SocketSet::new(Vec::with_capacity(1));
+        let h = single_set.add(sock);
+        self.poll_egress(iface, time,&mut single_set);
+        single_set.remove(h)
+    }
+    
+    /// Poll this network device for incoming packets.
+    fn poll_ingress(
+        &mut self, iface: &mut Interface, time: Instant,
+        sockets: &mut SocketSet,
+    ) -> PollIngressSingleResult {
+        // Smoltcp expects a mutable reference to the device, but the RTL8139 driver is built
+        // to work with a shared reference. We can safely cast the shared reference to a mutable.
+        match self {
+            NetworkDevice::Rtl8139(rtl8139) => iface.poll_ingress_single(time, unsafe {
+                ptr::from_ref(rtl8139.deref().deref()).cast_mut().as_mut().unwrap()
+            }, sockets),
+            NetworkDevice::Loopback(loopback) => iface.poll_ingress_single(time, unsafe {
+                ptr::from_ref(loopback.deref().deref()).cast_mut().as_mut().unwrap()
+            }, sockets),
+        }
+    }
+
+    /// Poll this network device for outgoing packets.
+    fn poll_egress(
+        &mut self, iface: &mut Interface, time: Instant,
+        sockets: &mut SocketSet,
     ) -> PollResult {
         // Smoltcp expects a mutable reference to the device, but the RTL8139 driver is built
         // to work with a shared reference. We can safely cast the shared reference to a mutable.
         match self {
-            NetworkDevice::Rtl8139(rtl8139) => iface.poll(time, unsafe {
+            NetworkDevice::Rtl8139(rtl8139) => iface.poll_egress(time, unsafe {
                 ptr::from_ref(rtl8139.deref().deref()).cast_mut().as_mut().unwrap()
             }, sockets),
-            NetworkDevice::Loopback(loopback) => iface.poll(time, unsafe {
+            NetworkDevice::Loopback(loopback) => iface.poll_egress(time, unsafe {
                 ptr::from_ref(loopback.deref().deref()).cast_mut().as_mut().unwrap()
             }, sockets),
         }
