@@ -6,6 +6,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::ops::Deref;
 use core::ptr;
+use core::sync::atomic::{AtomicBool, Ordering};
 use log::{error, info, trace};
 use spin::Mutex;
 use x86_64::registers::control::Cr2;
@@ -136,6 +137,7 @@ impl TryFrom<u8> for InterruptVector {
 }
 
 const MAX_VECTORS: usize = 256;
+static IN_INTERRUPT: AtomicBool = AtomicBool::new(false);
 
 pub struct InterruptDispatcher {
     int_vectors: Vec<Mutex<Vec<Box<dyn InterruptHandler>>>>,
@@ -163,6 +165,7 @@ pub fn setup_idt() {
 }
 
 fn handle_exception(frame: InterruptStackFrame, index: u8, error: Option<u64>) {
+    begin_interrupt();
     panic!(
         "CPU Exception: [{} - {:?}]\nError code: [{:?}]\n{:?}",
         index,
@@ -173,6 +176,7 @@ fn handle_exception(frame: InterruptStackFrame, index: u8, error: Option<u64>) {
 }
 
 fn handle_page_fault(frame: InterruptStackFrame, _index: u8, error: Option<u64>) {
+    begin_interrupt();
     let fault_addr = Cr2::read().expect("Invalid address in CR2 during page fault");
     let thread = scheduler().current_thread();
 
@@ -195,6 +199,7 @@ fn handle_page_fault(frame: InterruptStackFrame, _index: u8, error: Option<u64>)
                 MemorySpace::User,
                 PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE,
             );
+            end_interrupt();
             return ;
         }
 
@@ -207,6 +212,7 @@ fn handle_page_fault(frame: InterruptStackFrame, _index: u8, error: Option<u64>)
                 MemorySpace::User,
                 PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE,
             );
+            end_interrupt();
             return ;
         }
     }
@@ -215,8 +221,22 @@ fn handle_page_fault(frame: InterruptStackFrame, _index: u8, error: Option<u64>)
     panic!("Page Fault!\nError code: [{:?}]\nAddress: [0x{:0>16x}]\n{:?}", error, fault_addr, frame);
 }
 
+pub fn begin_interrupt() {
+    IN_INTERRUPT.compare_exchange(
+        false, true, Ordering::Acquire, Ordering::Relaxed,
+    ).unwrap();
+}
+
+pub fn end_interrupt() {
+    IN_INTERRUPT.compare_exchange(
+    true, false, Ordering::Acquire, Ordering::Relaxed,
+    ).unwrap();
+}
+
 fn handle_interrupt(_frame: InterruptStackFrame, index: u8, _error: Option<u64>) {
+    begin_interrupt();
     interrupt_dispatcher().dispatch(index);
+    end_interrupt();
 }
 
 impl InterruptDispatcher {

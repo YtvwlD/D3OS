@@ -35,6 +35,8 @@
 use crate::consts::MAIN_USER_STACK_START;
 use crate::consts::MAX_USER_STACK_SIZE;
 use crate::consts::USER_SPACE_ENV_START;
+use crate::interrupt::interrupt_dispatcher::begin_interrupt;
+use crate::interrupt::interrupt_dispatcher::end_interrupt;
 use crate::memory::stack;
 use crate::memory::stack::StackAllocator;
 use crate::memory::vma::VmaType;
@@ -200,6 +202,8 @@ impl Thread {
 
     /// Called first for both a new kernel and a new user thread
     fn kickoff_kernel_thread() -> ! {
+        // TODO: this doesn't work for the first thread
+        end_interrupt(); // the new thread is not in an interrupt
         let scheduler = scheduler();
         scheduler.set_init(); // scheduler initialized
 
