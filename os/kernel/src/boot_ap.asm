@@ -17,32 +17,25 @@
 ;*                                                                    *
 ;* Autor:           Michael Schoettner, Univ. Duesseldorf, 25.8.2022  *
 ;**********************************************************************
-
-; 
+;
 ; The Segment '.boot_seg_ap' will be relocated by the bootstrap proc.
 ; grub loads the code above 1 MB but real mode code needs to be <1 MB
 ;
 [SECTION .boot_seg_ap]
 
-; Variables need to be modified during code relocation in 'bootbp.asm' 
-[GLOBAL gdt_ap]
-[GLOBAL gdtd_ap]
-
 ; Entry function of bootstrap processor in 'boot_bp.asm'
 [EXTERN start_asm]
 
- 
 ; 'boot_ap' is the entry function for all application processors
 USE16
-
 boot_ap:
 	; Initialize segment registers
 	mov ax, cs 		; Same segment for code and data
 	mov ds, ax	 	; For the time being we need no stack
 
-	cli				
+	cli
 	mov al, 0x80
-	out 0x70, al   	; disable NMI 
+	out 0x70, al   	; disable NMI
 
 	; Set GDT
 	lgdt [gdtd_ap - boot_ap]
@@ -57,7 +50,7 @@ boot_ap:
 
 
 ; GDT for application processors (will be replaced later)
-; Attentation: This GDT is in the segment '.boot_seg_ap' because it 
+; Attentation: This GDT is in the segment '.boot_seg_ap' because it
 ; will be copied below 1 MB during code relocation
 align 4
 
@@ -99,7 +92,7 @@ boot_ap32:
 
 	; In 'boot_bp.asm"
 	jmp start_asm
-	
+
     ; print `**` to screen
     ; should never been reached
     mov dword [0xb8000], 0x2e262e26

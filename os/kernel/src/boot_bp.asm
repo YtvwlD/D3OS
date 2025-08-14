@@ -27,9 +27,6 @@
 ;**********************************************************************
 
 ; Stack
-
-; 254 GB max. supported DRAM size by paging tables
-MAX_MEM: equ 254
 STACK_MEM_SIZE: equ  6553600	; total size of all stacks (16)
 STACK_SIZE_ONE: equ 409600		; stack size of one processor
 
@@ -50,11 +47,7 @@ global start_asm
 
 ; In 'linker.ld'
 [EXTERN ___BOOT_AP_START__]     
-[EXTERN ___BOOT_AP_END__]     
-
-; In 'boot.asm', benoetigt beim Umkopieren dieses Boot-Codes fuer die APs
-[EXTERN gdt_ap]
-[EXTERN gdtd_ap]
+[EXTERN ___BOOT_AP_END__]
 
 [GLOBAL copy_boot_code] ; wird in 'startup.rs' benoetigt
 [GLOBAL RELOCATE_BOOT_CODE] ; wird in 'startup.rs' benoetigt
@@ -135,28 +128,9 @@ set_cr3:
 ;
 longmode_start:
 [BITS 64]
-
-	; Pruefen, ob es sich um den Bootstrap-Core oder einen weiteren 
-	; Application-Core handelt
-	;mov eax, [is_bootstrap]
-	;cmp eax, 0
-	;jne longmode_start_ap
-	jmp longmode_start_ap
-
-	mov rax, is_bootstrap
-	mov dword [rax], 1
-	
-	; Init PICs
-	;call   reprogram_pics
     ; Sets the idt via setup_ap_idt in interrupt_dispatcher.rs
 	call setup_ap_idt
 
-    ; Call Rust entry function in 'startup.rs' for bootstrap processor
-    ;extern startup
-    ;call startup
-	jmp end
-
-longmode_start_ap:
     ; Call Rust entry function in 'startup.rs' for application proc.
     call startup_ap
 
@@ -196,12 +170,6 @@ gdt:
 gdt_80:
 	dw  4*8 - 1  ; GDT Limit=24, 4 GDT Eintraege - 1
 	dq  gdt      ; Adresse der GDT
-
-;
-; Global variable needed to detect the boostrap processor
-;
-is_bootstrap:
-	dq	0	
 
 ;	
 ;  Memory for stacks
