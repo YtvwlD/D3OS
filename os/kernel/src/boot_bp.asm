@@ -37,8 +37,6 @@ global start_asm
 RELOCATE_BOOT_CODE: equ 0x40000
 
 ; Stack
-STACK_MEM_SIZE: equ  65536	; total size of all stacks
-STACK_SIZE_ONE: equ 4096		; stack size of one processor
 
 ; 254 GB max. supported DRAM size by paging tables
 MAX_MEM: equ 254
