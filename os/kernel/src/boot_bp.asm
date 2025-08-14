@@ -109,7 +109,7 @@ init_longmode:
 	mov    cr4, eax
 
 	; Setup paging tables (required for long mode)
-	call   setup_paging
+	call set_cr3
 
 	; Switch to long mode (for the time being in compatibility mode)
 	mov    ecx, 0x0C0000080 ; Select Extended Feature Enable Register 
@@ -170,6 +170,10 @@ fill_tables3_done:
 	mov    eax, pml4
 	mov    cr3, eax
 	ret
+set_cr3:
+    mov eax, 0x1000 ;TODO: get actual variable in here
+    mov    cr3, eax
+    ret
 
 
 ;
