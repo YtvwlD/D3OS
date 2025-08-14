@@ -1,6 +1,17 @@
 ENTRY(start)
 
 SECTIONS {
+    . = 8K;
+
+
+    /* Startcode fuer die APs, wird von System::init() reloziert */
+	.boot_seg_ap :
+	{
+		___BOOT_AP_START__ = .;
+		*(".boot_seg_ap")
+		*(".boot_seg_ap$")
+	    ___BOOT_AP_END__ = .;
+	}
     /*
      * load the kernel to the following address
      *
@@ -11,6 +22,7 @@ SECTIONS {
      *   8MB to 9MB:   ACPI
      *   9MB to 24MB:  Boot Services
      */
+
     . = 25M;
 
     ___KERNEL_DATA_START__ = .;
@@ -20,15 +32,6 @@ SECTIONS {
         /* ensure that the multiboot header is at the beginning */
         *(.multiboot2_sec)
     }
-
-    /* Startcode fuer die APs, wird von System::init() reloziert */
-	.boot_seg_ap ALIGN(0x10) :
-	{
-		___BOOT_AP_START__ = .;
-		*(".boot_seg_ap")
-		*(".boot_seg_ap$")
-	}
-	___BOOT_AP_END__ = .;
 
 
     .text ALIGN (4K) :

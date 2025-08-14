@@ -28,14 +28,6 @@
 
 global start_asm
 
-;
-; Constants
-;
-
-; Address of boot code for application processors
-; Also defined in 'consts.rs'. Must be consistent!
-RELOCATE_BOOT_CODE: equ 0x40000
-
 ; Stack
 
 ; 254 GB max. supported DRAM size by paging tables
@@ -217,62 +209,6 @@ end:
     cli
     mov dword [0xb8000], 0x2f2a2f2a
 	hlt
-
-
-
-;
-; This function is called from 'startup.rs' gerufen for relocating the
-; boot code in 'boot_ap.asm' for the application processors below 1 MB
-; Necessary because the application processors start in real mode
-;
-copy_boot_code:
-	mov rax, RELOCATE_BOOT_CODE
-	mov rbx, ___BOOT_AP_START__   ; = 0x100020
-	mov rcx, ___BOOT_AP_END__     ; = 0x100076
-copyc:
-	mov rdx, [rbx]    ; load qword from source
-	mov [rax], rdx    ; write qword to destination
-	add rbx, 8        ; next qword of source 
-	add rax, 8        ; next qword of destination 
-	cmp rbx, rcx      ; check if end is reached
-	jle copyc
-
-	; Adresse von 'gdt_ap' im kopierten Code
-	mov rbx, gdt_ap
-	sub rbx, ___BOOT_AP_START__
-    add rbx, RELOCATE_BOOT_CODE
-    
-	; Adresse von 'gdtd_ap' im kopierten Code
-	mov rax, gdtd_ap
-	sub rax, ___BOOT_AP_START__
-    add rax, RELOCATE_BOOT_CODE
-    add rax, 2     ; skip 'limit'
-
-    ; Aktualisieren von 'gdtd_ap' im kopierten Code
-    mov [eax], ebx
-	ret
-	
-
-;	
-;  Memory for page tables
-;
-[SECTION .bss]
-
-[GLOBAL pml4]
-[GLOBAL pdp]
-[GLOBAL pd]
-
-pml4:
-	resb   4096
-	alignb 4096
-
-pdp:
-	resb   MAX_MEM*8
-	alignb 4096
-
-pd:
-	resb   MAX_MEM*4096
-
 
 
 [SECTION .data]

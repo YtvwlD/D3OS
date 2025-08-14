@@ -67,9 +67,9 @@ use x86_64::{PhysAddr, VirtAddr};
 unsafe extern "C" {
     static ___KERNEL_DATA_START__: u64; // start address of OS image
     static ___KERNEL_DATA_END__: u64; // end address of OS image
+    static ___BOOT_AP_START__: u64; // start address of the AP code
+    static ___BOOT_AP_END__: u64; // start address of the AP code
 }
-
-const RELOCATE_BOOT_CODE: u64 = 0x40000;
 
 const INIT_HEAP_PAGES: usize = 0x400; // number of heap pages for booting the OS
 
@@ -643,11 +643,28 @@ fn unprotect_frame(frame: PhysFrame, root_level: usize) {
 // Assembly function for relocating boot code for application cores
 unsafe extern "C" { fn copy_boot_code(); }
 
+fn boot_ap_end() -> *const u64{
+    ptr::from_ref(unsafe { &___BOOT_AP_END__ })
+}
+fn boot_ap_start() -> *const u64{
+    ptr::from_ref(unsafe { &___BOOT_AP_START__ })
+}
+
+fn boot_reg() -> PhysFrameRange {
+
+    let start = PhysFrame::from_start_address(PhysAddr::new(boot_ap_start() as u64))
+        .expect("AP boot code is not page aligned");
+    let end = PhysFrame::from_start_address(PhysAddr::new(boot_ap_end() as u64)
+        .align_up(PAGE_SIZE as u64)).unwrap();
+
+    PhysFrameRange { start, end }
+}
+
 fn start_ap_processors() {
 
     info!("Booting AP cores");
 
-    unsafe { copy_boot_code(); }
+    let boot_ap_start = boot_ap_start();
 
     // Sende Init-IPI an alle APs
     ipi::send_init();
@@ -656,7 +673,8 @@ fn start_ap_processors() {
     timer().wait(10000);
 
     // The vector is the startup address for the boot code
-    let vector = (RELOCATE_BOOT_CODE >> 12) as u32;
+    //let vector = (RELOCATE_BOOT_CODE >> 12) as u32;
+    let vector: u8 = (boot_ap_start.addr() >> 12).try_into().unwrap();
 
     info!("   Sending STARTUP IPI #1");
     ipi::send_startup(vector as u8);
