@@ -117,51 +117,6 @@ init_longmode:
 	; Jump to 64 bit code segment (activates full long mode)
 	jmp    2 * 0x8 : longmode_start
 
-
-;
-; Create page tables for long mode using 2 MB pages and a 1:1 mapping 
-; for 0 - MAX_MEM physical memory
-;
-setup_paging:
-	; PML4 (Page Map Level 4)
-	mov    eax, pdp
-	or     eax, 0xf
-	mov    dword [pml4+0], eax
-	mov    dword [pml4+4], 0
-
-	; PDPE (Page-Directory-Pointer Entry) for 16 GB
-	mov    eax, pd
-	or     eax, 0x7           ; Address of first table including flags
-	mov    ecx, 0
-fill_tables2:
-	cmp    ecx, MAX_MEM       ; Referencing MAX_MEM tables 
-	je     fill_tables2_done
-	mov    dword [pdp + 8*ecx + 0], eax
-	mov    dword [pdp + 8*ecx + 4], 0
-	add    eax, 0x1000        ; Each table has 4 KB size
-	inc    ecx
-	ja     fill_tables2
-fill_tables2_done:
-
-	; PDE (Page Directory Entry)
-	mov    eax, 0x0 | 0x87    ; Start address byte 0..3 (=0) + flags
-	mov    ebx, 0             ; Start address byte 4..7 (=0)
-	mov    ecx, 0
-fill_tables3:
-	cmp    ecx, 512*MAX_MEM  ; Fill MAX_MEM tables each with 512 entries
-	je     fill_tables3_done
-	mov    dword [pd + 8*ecx + 0], eax ; low bytes
-	mov    dword [pd + 8*ecx + 4], ebx ; high bytes
-	add    eax, 0x200000     ; 2 MB for each page
-	adc    ebx, 0            ; Overflow? -> increment high part of addr
-	inc    ecx
-	ja     fill_tables3
-fill_tables3_done:
-
-	; Set base pointer to PML4
-	mov    eax, pml4
-	mov    cr3, eax
-	ret
 set_cr3:
     mov eax, 0x1000 ;TODO: get actual variable in here
     mov    cr3, eax
