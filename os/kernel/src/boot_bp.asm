@@ -26,8 +26,6 @@
 ;* Autor:           Michael Schoettner, Univ. Duesseldorf, 25.8.2022  *
 ;**********************************************************************
 
-global start_asm
-
 ; Stack
 
 ; 254 GB max. supported DRAM size by paging tables
@@ -43,9 +41,12 @@ pagetable_start:  equ 0x103000
 [GLOBAL pagetable_end]
 pagetable_end:  equ 0x200000
 
-; In 'interrupts.asm'
-[EXTERN setup_idt]
-[EXTERN reprogram_pics]
+; In 'boot.rs' - hier starten die AP's
+[extern startup_ap]
+; In 'interrupt_dispatcher.rs'
+[EXTERN setup_ap_idt]
+
+global start_asm
 
 ; In 'linker.ld'
 [EXTERN ___BOOT_AP_START__]     
@@ -134,7 +135,6 @@ set_cr3:
 ;
 longmode_start:
 [BITS 64]
-	call   setup_idt
 
 	; Pruefen, ob es sich um den Bootstrap-Core oder einen weiteren 
 	; Application-Core handelt
@@ -148,6 +148,8 @@ longmode_start:
 	
 	; Init PICs
 	;call   reprogram_pics
+    ; Sets the idt via setup_ap_idt in interrupt_dispatcher.rs
+	call setup_ap_idt
 
     ; Call Rust entry function in 'startup.rs' for bootstrap processor
     ;extern startup
@@ -156,7 +158,6 @@ longmode_start:
 
 longmode_start_ap:
     ; Call Rust entry function in 'startup.rs' for application proc.
-    extern startup_ap
     call startup_ap
 
 end:

@@ -689,26 +689,11 @@ fn start_ap_processors() {
 // application core
 //
 #[unsafe(no_mangle)]
-pub extern fn startup_ap() {
+pub extern "C" fn startup_ap() {
     //info!("    Application processor executing 'startup_ap'");
 
     loop{
         timer().wait(1000);
         info!("    Application processor still running.."); //also crashes
     }
-}
-#[unsafe(no_mangle)]
-pub extern fn setup_idt() {
-    //cr3 setzen für rust (crate readcr3)
-    //vom bp laden?? ist im code schon hinterlegt idt.ref.load? auf anderen kernen benutzen
-    //interrupts deaktivieren davor (paging)
-    //shared Nothing arcitektur nachkucken - wollen wir auf jeden Fall
-    //eigene queue für jeden core
-    //gibt es scheduler mit sharedAll?? nachkucken (einen gobalen scheduler - linux?
-    //barrelfish nochmal nachlesen
-    //linux earliest elidgeble virtual deadline first nachkucken
-    //was ist die letzte
-    //neuester Stand D3OS
-    //info!("    Initializing IDT for AP");
-    interrupt_dispatcher::setup_idt(); //crashes now
 }
