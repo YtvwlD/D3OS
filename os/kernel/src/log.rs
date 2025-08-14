@@ -42,7 +42,7 @@ impl log::Log for Logger {
         let file = record.file().unwrap_or("unknown").split('/').next_back().unwrap_or("unknown");
         let line = record.line().unwrap_or(0);
 
-        let streams = self.streams.read();
+        let streams = self.streams.write(); //locked mutlicore stuff
         if streams.is_empty() {
             if let Some(serial) = &self.serial {
                 serial.write_str(ansi::FOREGROUND_CYAN);
