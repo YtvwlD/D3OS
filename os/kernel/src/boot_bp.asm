@@ -40,6 +40,8 @@ RELOCATE_BOOT_CODE: equ 0x40000
 
 ; 254 GB max. supported DRAM size by paging tables
 MAX_MEM: equ 254
+STACK_MEM_SIZE: equ  6553600	; total size of all stacks (16)
+STACK_SIZE_ONE: equ 409600		; stack size of one processor
 
 ; Speicherplatz fuer die Seitentabelle
 
