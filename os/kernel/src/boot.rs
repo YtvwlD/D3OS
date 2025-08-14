@@ -99,9 +99,11 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     info!("Initializing GDT");
     init_gdt();
 
-    // The bootloader marks the kernel image region as available, so we need to reserve it manually
+    // The bootloader marks the kernel image & AP boot region as available,
+    // so we need to reserve it manually
     unsafe {
         memory::frames::reserve(kernel_image_region());
+        memory::frames::reserve(ap_boot_region());
     }
 
     // and initialize kernel heap, after which formatted strings may be used in logs and panics.
@@ -650,7 +652,7 @@ fn boot_ap_start() -> *const u64{
     ptr::from_ref(unsafe { &___BOOT_AP_START__ })
 }
 
-fn boot_reg() -> PhysFrameRange {
+fn ap_boot_region() -> PhysFrameRange {
 
     let start = PhysFrame::from_start_address(PhysAddr::new(boot_ap_start() as u64))
         .expect("AP boot code is not page aligned");
