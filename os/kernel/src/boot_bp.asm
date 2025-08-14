@@ -39,9 +39,11 @@ pagetable_start:  equ 0x103000
 pagetable_end:  equ 0x200000
 
 ; In 'boot.rs' - hier starten die AP's
-[extern startup_ap]
+[EXTERN startup_ap]
 ; In 'interrupt_dispatcher.rs'
 [EXTERN setup_ap_idt]
+; In 'interrupt_dispatcher.rs'
+[EXTERN kernel_cr3]
 
 global start_asm
 
@@ -112,7 +114,7 @@ init_longmode:
 	jmp    2 * 0x8 : longmode_start
 
 set_cr3:
-    mov eax, 0x1000 ;TODO: get actual variable in here
+    mov eax, [kernel_cr3]
     mov    cr3, eax
     ret
 
