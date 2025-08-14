@@ -14,7 +14,7 @@ alias = "qemu"
 # Run tasks
 
 [tasks.qemu]
-command = "qemu-system-x86_64" #"qemu-system-x86_64" "host-spawn"
+command = "qemu-system-x86_64" #"host-spawn"
 dependencies = [ "image", "hdd", "ovmf"]
 args = [
     #"qemu-system-x86_64",
