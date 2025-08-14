@@ -672,7 +672,7 @@ fn start_ap_processors() {
     ipi::send_init();
 
     // min 10s (10000) warten
-    timer().wait(10000);
+    timer().wait(5000);
 
     // The vector is the startup address for the boot code
     //let vector = (RELOCATE_BOOT_CODE >> 12) as u32;
