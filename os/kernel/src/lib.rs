@@ -73,8 +73,11 @@ pub mod built_info {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
+static PANIC_LOCK: Mutex<()> = Mutex::new(());
+
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    let lock = PANIC_LOCK.lock();
     if terminal_initialized() {
         println!("Panic: {}", info);
     } else {
@@ -88,6 +91,7 @@ fn panic(info: &PanicInfo) -> ! {
 
         logger().log(&record);
     }
+    drop(lock);
 
     loop {}
 }
