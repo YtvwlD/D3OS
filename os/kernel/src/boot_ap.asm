@@ -3,7 +3,7 @@
 ;*                  B O O T _ B P                                     *
 ;*                                                                    *
 ;*--------------------------------------------------------------------*
-;* Description:     ;This is the boot code for all application        *
+;* Description:     This is the boot code for all application         *
 ;*                  processors. The boostrap processor sends in an    *
 ;*                  IPI (= Inter-Processor-Interrupt) in 'boot.rs' to *
 ;*                  all application processors with the addess of the *
@@ -41,7 +41,7 @@ STACK_SIZE_ONE: equ 409600	; Stack Groesse von einem einzelnem AP
 ; In 'interrupt_dispatcher.rs'
 [EXTERN kernel_cr3]
 ; In 'linker.ld'
-[EXTERN ___BOOT_AP_START__]     
+[EXTERN ___BOOT_AP_START__]
 [EXTERN ___BOOT_AP_END__]
 
 
@@ -116,7 +116,7 @@ boot_ap32:
 [BITS 32]
 start_asm:
 	cld              ; required by GCC
-	cli              
+	cli
 	lgdt   [gdt_80]  ; load GDT
 
 	; Set segment registers
@@ -151,7 +151,7 @@ set_cr3:
     mov    cr3, eax
 
 	; Switch to long mode (for the time being in compatibility mode)
-	mov    ecx, 0x0C0000080 ; Select Extended Feature Enable Register 
+	mov    ecx, 0x0C0000080 ; Select Extended Feature Enable Register
 	rdmsr
 	or     eax, 1 << 8 		; LME (Long Mode Enable)
 	wrmsr
@@ -187,7 +187,7 @@ end:
 [SECTION .data]
 
 ;
-; GDT 
+; GDT
 ;
 gdt:
 	dw  0,0,0,0  ; NULL-Deskriptor
@@ -214,11 +214,11 @@ gdt_80:
 	dw  4*8 - 1  ; GDT Limit=24, 4 GDT Eintraege - 1
 	dq  gdt      ; Adresse der GDT
 
-;	
+;
 ;  Memory for stacks
 ;
 stack_mem_ptr:
-	dd  reserve_stack_mem 
+	dd  reserve_stack_mem
 
 [SECTION .bss]
 reserve_stack_mem:
