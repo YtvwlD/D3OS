@@ -149,7 +149,6 @@ set_cr3:
 	; Setup paging tables (required for long mode)
     mov eax, [kernel_cr3]
     mov    cr3, eax
-    ret
 
 	; Switch to long mode (for the time being in compatibility mode)
 	mov    ecx, 0x0C0000080 ; Select Extended Feature Enable Register 
