@@ -691,9 +691,16 @@ fn start_ap_processors() {
 #[unsafe(no_mangle)]
 pub extern "C" fn startup_ap() {
     //info!("    Application processor executing 'startup_ap'");
-
+    let mut l =10;
     loop{
         timer().wait(1000);
-        info!("    Application processor still running.."); //also crashes
+        info!("    Application processor still running..");
+        //terminal().write_str("Hello World!");
+        l -= 1;
+        if l ==0 { break;}
     }
+    loop {}
 }
+
+//terminal().write() oder so
+//maybe deadlock
