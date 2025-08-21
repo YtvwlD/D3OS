@@ -245,7 +245,42 @@ pub fn open_icmp() -> SocketHandle {
     handle
 }
 
-pub fn close_socket(handle: SocketHandle) {
+pub fn close_socket(handle: SocketHandle, typ: SocketType) {
+    // close the socket
+    match typ {
+        SocketType::Tcp => {
+            get_socket_for_current_process!(socket, handle, tcp::Socket);
+            socket.close();
+        },
+        SocketType::Udp => {
+            get_socket_for_current_process!(socket, handle, udp::Socket);
+            socket.close();
+        },
+        SocketType::Icmp => {
+            // Nothing to do here.
+        },
+    }
+    // make sure that all packets have been sent
+    loop {
+        // these extra blocks are needed so that we don't block all sockets
+        if match typ {
+            SocketType::Tcp => {
+                get_socket_for_current_process!(socket, handle, tcp::Socket);
+                socket.send_queue() == 0
+            },
+            SocketType::Udp => {
+                get_socket_for_current_process!(socket, handle, udp::Socket);
+                socket.send_queue() == 0
+            },
+            SocketType::Icmp => {
+                get_socket_for_current_process!(socket, handle, icmp::Socket);
+                socket.send_queue() == 0
+            },
+        } {
+            break;
+        }
+        scheduler().sleep(100);
+    }
     let sockets = SOCKETS.get().expect("Socket set not initialized!");
     check_ownership(handle);
     SOCKET_PROCESS.write().remove(&handle).unwrap();
@@ -442,6 +477,7 @@ pub(crate) fn close_sockets_for_process(process: &mut Process) {
         .copied()
         .collect();
     for handle in handles {
+        // TODO: close the socket and make sure all data has been sent
         lock.remove(&handle).unwrap();
         sockets.remove(handle);
     }

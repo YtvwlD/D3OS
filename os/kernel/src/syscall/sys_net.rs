@@ -232,9 +232,9 @@ pub unsafe fn sys_sock_receive(
     }
 }
 
-pub fn sys_sock_close(handle: SocketHandle) -> isize {
-    info!("closing {handle} socket");
-    close_socket(handle);
+pub fn sys_sock_close(handle: SocketHandle, protocol: SocketType) -> isize {
+    info!("closing {protocol:?} socket {handle}");
+    close_socket(handle, protocol);
     0
 }
 
