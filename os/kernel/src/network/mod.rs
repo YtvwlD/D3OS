@@ -281,9 +281,10 @@ pub fn bind_icmp(handle: SocketHandle, ident: u16) -> Result<(), icmp::BindError
     socket.bind(icmp::Endpoint::Ident(ident))
 }
 
-pub fn accept_tcp(handle: SocketHandle) -> Result<IpEndpoint, tcp::ConnectError> {
-    // TODO: smoltcp knows no backlog
-    // all but the first connection will fail
+/// Accept a new connection from a TCP socket.
+/// 
+/// This returns the client that opened the new connection and a **new listening socket**.
+pub fn accept_tcp(handle: SocketHandle) -> Result<(IpEndpoint, SocketHandle), tcp::ConnectError> {
     loop {
         // this extra block is needed so that we don't block all sockets
         {
@@ -294,8 +295,21 @@ pub fn accept_tcp(handle: SocketHandle) -> Result<IpEndpoint, tcp::ConnectError>
         }
         scheduler().sleep(100);
     }
-    get_socket_for_current_process!(socket, handle, tcp::Socket);
-    Ok(socket.remote_endpoint().unwrap())
+    let (client, listen) = {
+        // this extra block is needed so that we release the sockets lock
+        get_socket_for_current_process!(socket, handle, tcp::Socket);
+        (
+            socket.remote_endpoint().expect("failed to get remote endpoint"),
+            socket.listen_endpoint(),
+        )
+    };
+    // now, we have a socket that is connected
+    // but, we need to have to create a new one to be able to accept additional connections
+    let listen_handle = open_tcp();
+    bind_tcp(listen_handle, listen.addr.unwrap_or(
+        IpAddress::Ipv6(Ipv6Addr::UNSPECIFIED)
+    ), listen.port).expect("failed to create new listening socket");
+    Ok((client, listen_handle))
 }
 
 pub fn connect_tcp(handle: SocketHandle, host: IpAddress, port: u16) -> Result<IpEndpoint, tcp::ConnectError> {    get_socket_for_current_process!(socket, handle, tcp::Socket);
