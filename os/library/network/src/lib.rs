@@ -204,6 +204,16 @@ impl TcpStream {
         );
         Ok(Self { handle, local_address, peer_address: address })
     }
+    
+    /// Get the remote address.
+    pub fn peer_addr(&self) -> SocketAddr {
+        self.peer_address
+    }
+    
+    /// Get the local address.
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_address
+    }
 
     pub fn write(&self, buf: &[u8]) -> Result<usize, NetworkError> {
         let protocol = 1;
