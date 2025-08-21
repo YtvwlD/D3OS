@@ -215,6 +215,17 @@ pub fn initrd() -> &'static TarArchiveRef<'static> {
         .expect("Trying to access initial ramdisk before initialization!")
 }
 
+pub fn get_initrd_frames(module: &ModuleTag) -> PhysFrameRange {
+    PhysFrameRange {
+        start: PhysFrame::from_start_address(PhysAddr::new(module.start_address() as u64))
+            .expect("Initial ramdisk is not page aligned"),
+        end: PhysFrame::from_start_address(
+            PhysAddr::new(module.end_address() as u64).align_up(PAGE_SIZE as u64),
+        )
+        .unwrap(),
+    }
+}
+
 /// Kernel Allocator.
 /// Used for dynamic memory allocation in the kernel.
 #[global_allocator]
