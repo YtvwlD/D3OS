@@ -11,7 +11,7 @@ SECTIONS {
      *   8MB to 9MB:   ACPI
      *   9MB to 24MB:  Boot Services
      */
-    . = 25M;
+    . = 128M;
 
     ___KERNEL_DATA_START__ = .;
 
