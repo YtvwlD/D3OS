@@ -642,9 +642,6 @@ fn unprotect_frame(frame: PhysFrame, root_level: usize) {
     }
 }
 
-// Assembly function for relocating boot code for application cores
-unsafe extern "C" { fn copy_boot_code(); }
-
 fn boot_ap_end() -> *const u64{
     ptr::from_ref(unsafe { &___BOOT_AP_END__ })
 }
