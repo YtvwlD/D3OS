@@ -25,15 +25,15 @@ pub const APIC_BASE:u32 = 0xfee00000;
 //
 // read register
 //
-pub unsafe fn read_reg32(reg: u32) -> u32 {
-	volatile_load((APIC_BASE + reg) as *const u32)
+pub fn read_reg32(reg: u32) -> u32 {
+	unsafe {volatile_load((APIC_BASE + reg) as *const u32)}
 }
 
 //
 // Write register
 //
-pub unsafe fn write_reg32(reg: u32, value: u32) {
-	volatile_store((APIC_BASE + reg) as *mut u32, value);
+pub fn write_reg32(reg: u32, value: u32) {
+	unsafe {volatile_store((APIC_BASE + reg) as *mut u32, value)};
 }
 
 // Trigger mode
@@ -156,9 +156,7 @@ fn read_icr_register() -> InterruptCommand {
     // read low 32 bit
 	let mut low_value:u64;
 	loop {
-		unsafe { 
-			low_value = read_reg32(INTERRUPT_COMMAND_REGISTER_LOW) as u64;
-		}
+		low_value = read_reg32(INTERRUPT_COMMAND_REGISTER_LOW) as u64;
 		icr = low_value.into();
 		if icr.delivery_status() == IpiDeliveryStatus::Idle as u8  {
 			break;
@@ -167,9 +165,7 @@ fn read_icr_register() -> InterruptCommand {
 
     // read hight 32 bit
 	let high_value:u64;
-	unsafe {
-		high_value = read_reg32(INTERRUPT_COMMAND_REGISTER_HIGH) as u64;
-	}
+	high_value = read_reg32(INTERRUPT_COMMAND_REGISTER_HIGH) as u64;
 
     // fill InterruptCommand  
 	let mut existing_value: u64 = icr.into();

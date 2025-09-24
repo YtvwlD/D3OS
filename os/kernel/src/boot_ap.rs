@@ -12,7 +12,7 @@ pub extern "C" fn startup_ap(cpu_id: u32) {
     //info!("    Application processor executing 'startup_ap'");
 
     // installs the cpu_id in the cpuLocal struct on the GS segment
-    unsafe { install_gs_base(new_cpu_local(cpu_id)); }
+    install_gs_base(new_cpu_local(cpu_id));
 
     let mut l = 5; //cpu_id;
     loop{
@@ -55,7 +55,7 @@ pub fn current_core_id() -> u32 {
     let id: u32;
     unsafe {
         core::arch::asm!(
-        "mov {tmp}, gs:[8]",    //id is after self_ptr (8 bytes)
+        "mov {tmp:e}, gs:[8]",    //id is after self_ptr (8 bytes)
         tmp = out(reg) id,
         options(nostack, preserves_flags, readonly)
         );
