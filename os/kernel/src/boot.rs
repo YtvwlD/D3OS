@@ -678,26 +678,3 @@ fn start_ap_processors() {
     info!("   Sending STARTUP IPI #1");
     ipi::send_startup(vector as u8);
 }
-
-
-
-//
-// First rust function called from assembly boot code for an
-// application core
-//
-#[unsafe(no_mangle)]
-pub extern "C" fn startup_ap() {
-    //info!("    Application processor executing 'startup_ap'");
-    let mut l =10;
-    loop{
-        timer().wait(1000);
-        info!("    Application processor still running..");
-        //terminal().write_str("Hello World!");
-        l -= 1;
-        if l ==0 { break;}
-    }
-    loop {}
-}
-
-//terminal().write() oder so
-//maybe deadlock
