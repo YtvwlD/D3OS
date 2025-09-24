@@ -134,6 +134,13 @@ start_asm:
 	add eax, STACK_SIZE_ONE
 	mov    esp, eax
 
+	; Init cpuid: atomically fetch-and-increment the counter
+init_cpuid:
+	mov    eax, 1
+	lock xadd [cpu_id_counter], eax
+	push dword 0
+	push eax
+
 	jmp    init_longmode
 
 ;
@@ -173,6 +180,9 @@ longmode_start:
 [BITS 64]
     ; Sets the idt via setup_ap_idt in interrupt_dispatcher.rs
 	call setup_ap_idt
+
+    ; pop cpu_id back up to pass it to startup_ap
+	pop rdi
 
     ; Call Rust entry function in 'boot.rs' for application proc.
     call startup_ap
@@ -219,6 +229,8 @@ gdt_80:
 ;
 stack_mem_ptr:
 	dd  reserve_stack_mem
+cpu_id_counter:
+	dd  1
 
 [SECTION .bss]
 reserve_stack_mem:
