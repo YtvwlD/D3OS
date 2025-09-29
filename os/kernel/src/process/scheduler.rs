@@ -13,6 +13,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::ptr;
 use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::AtomicU32;
 use core::sync::atomic::Ordering::Relaxed;
 use smallmap::Map;
 use spin::{Mutex, MutexGuard};
@@ -20,9 +21,18 @@ use spin::{Mutex, MutexGuard};
 
 // thread IDs
 static THREAD_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
+static ACTIVE_CPUS: AtomicU32 = AtomicU32::new(1);  //BP automatically
 
 pub fn next_thread_id() -> usize {
     THREAD_ID_COUNTER.fetch_add(1, Relaxed)
+}
+
+pub fn cpu_mark_online() {
+    ACTIVE_CPUS.fetch_add(1, Relaxed);
+}
+
+pub fn cpu_count() -> u32 {
+    ACTIVE_CPUS.load(Relaxed)
 }
 
 /// Everything related to the ready state in the scheduler

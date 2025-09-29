@@ -3,6 +3,7 @@ use core::any::Any;
 use log::info;
 use crate::timer;
 use raw_cpuid::CpuId;
+use crate::process::scheduler;
 
 // First rust function called from assembly boot code for an
 // application core
@@ -11,8 +12,9 @@ use raw_cpuid::CpuId;
 pub extern "C" fn startup_ap(cpu_id: u32) {
     //info!("    Application processor executing 'startup_ap'");
 
-    // installs the cpu_id in the cpuLocal struct on the GS segment
+    // installs the cpu_id in a cpuLocal struct on the GS segment
     install_gs_base(new_cpu_local(cpu_id));
+    scheduler::cpu_mark_online();
 
     let mut l = 5; //cpu_id;
     loop{
@@ -81,7 +83,7 @@ fn install_gs_base(cpu_local_ptr: *mut CpuLocal) {
 // Allocates a new CpuLocal struct and returns a pointer to it
 //
 // This function creates a Box and then uses into_raw(),
-// which makes its lifetime static
+// which should make its lifetime static
 fn new_cpu_local(id: u32) -> *mut CpuLocal {
     let cpu_local = Box::new(CpuLocal {
         self_ptr: 0 as *const CpuLocal,
