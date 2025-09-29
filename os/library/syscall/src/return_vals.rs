@@ -3,7 +3,7 @@
    ╟─────────────────────────────────────────────────────────────────────────╢
    ║ Descr.: Consts and types for syscall return values.                     ║
    ╟─────────────────────────────────────────────────────────────────────────╢
-   ║ Author: Michael Schoettner, 27.12.2024, HHU                             ║
+   ║ Author: Michael Schoettner, 28.08.2025, HHU                             ║
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
 
@@ -25,6 +25,11 @@ pub enum Errno {
     EINVALH    = -9,  // Invalid handle
     ENOTEMPTY  = -10, // Directory not empty
     EBADSTR    = -11, // Bad string
+    EBUSY      = -12, // Device busy
+    ENOTSUP    = -13, // Operation not supported
+    ECONNRESET = -14, // Connection reset by peer
+    ERDONLY    = -15, // Read-only file system
+    EAGAIN     = -16, // Resource unavailable
 }
 
 

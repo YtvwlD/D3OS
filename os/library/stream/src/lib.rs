@@ -6,6 +6,7 @@ use core::ops::Deref;
 
 pub trait InputStream {
     fn read_byte(&self) -> i16;
+    fn read_byte_nb(&self) -> Option<i16>;
 }
 
 pub trait OutputStream: Send + Sync {
@@ -21,15 +22,4 @@ impl Write for dyn OutputStream {
         self.deref().write_str(s);
         Ok(())
     }
-}
-
-pub unsafe fn strlen(str: *const u8) -> usize {
-    let mut len = 0;
-    unsafe {
-        while *str.add(len) != 0 {
-            len += 1;
-        }
-    }
-
-    len
 }

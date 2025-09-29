@@ -40,11 +40,8 @@ pub fn scan_partitions(device: &Arc<dyn BlockDevice + Send + Sync>) -> Vec<Arc<d
 
     // Iterate over the partition entries and create a Partition object for each valid one
     if let Ok(mbr) = Mbr::try_from_bytes(&buffer) {
-        for entry in mbr.partition_table.entries {
-            if entry.is_some() {
-                let entry = entry.unwrap();
-                partitions.push(Arc::new(Partition::new(Arc::clone(device), entry.start_sector_lba() as u64, entry.sector_count_lba() as u64)));
-            }
+        for entry in mbr.partition_table.entries.into_iter().flatten() {
+            partitions.push(Arc::new(Partition::new(Arc::clone(device), entry.start_sector_lba() as u64, entry.sector_count_lba() as u64)));
         }
     }
 

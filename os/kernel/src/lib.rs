@@ -9,11 +9,10 @@
 */
 #![feature(allocator_api)]
 #![feature(alloc_layout_extra)]
-#![feature(exact_size_is_empty)]
 #![feature(fmt_internals)]
 #![feature(abi_x86_interrupt)]
-#![feature(ptr_metadata)]
-#![feature(let_chains)]
+#![feature(map_try_insert)]
+#![feature(str_split_remainder)]
 #![feature(core_intrinsics)]
 #![allow(internal_features)]
 #![no_std]
@@ -37,10 +36,12 @@ use crate::process::process_manager::ProcessManager;
 use crate::process::scheduler::Scheduler;
 use crate::process::thread::Thread;
 use crate::syscall::syscall_dispatcher::CoreLocalStorage;
-use ::log::{Level, Log, Record, error};
+use ::log::{Level, Log, Record, error, info};
 use acpi::AcpiTables;
 use alloc::sync::Arc;
+use x86_64::instructions::interrupts;
 use core::fmt::Arguments;
+use core::hint::spin_loop;
 use core::panic::PanicInfo;
 use multiboot2::ModuleTag;
 use spin::{Mutex, Once, RwLock};
@@ -53,6 +54,7 @@ use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::tss::TaskStateSegment;
 
 extern crate alloc;
+extern crate llfree;
 
 #[macro_use]
 pub mod device;
@@ -66,11 +68,12 @@ pub mod network;
 pub mod process;
 pub mod storage;
 pub mod syscall;
+pub mod sync;
 pub mod ipi;
 pub mod boot_ap;
 
 pub mod built_info {
-    // The file has been placed there by the build script.
+    // The file has been placed there by the build script
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
 }
 
@@ -78,23 +81,37 @@ static PANIC_LOCK: Mutex<()> = Mutex::new(());
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    let lock = PANIC_LOCK.lock();
-    if terminal_initialized() {
-        println!("Panic: {}", info);
-    } else {
-        let args = [info.message().as_str().unwrap_or("(no message provided)")];
-        let record = Record::builder()
-            .level(Level::Error)
-            .file(info.location().map(|l| l.file()))
-            .line(info.location().map(|l| l.line()))
-            .args(Arguments::new_const(&args))
-            .build();
 
-        logger().log(&record);
+    let lock = PANIC_LOCK.lock();
+    // make sure we never exit
+    interrupts::disable();
+
+    // write the panic directly out to the serial port
+    // this needs no allocations, no locks and should always work
+    error!("Panic:");
+    let args = [info.message().as_str().unwrap_or("(no message provided)")];
+    let record = Record::builder()
+        .level(Level::Error)
+        .file(info.location().map(|l| l.file()))
+        .line(info.location().map(|l| l.line()))
+        .args(Arguments::new_const(&args))
+        .build();
+
+    logger().log(&record);
+
+    // if we do have an allocator already, try to use it to print more information
+    // this might fail, but we got the basic information out already
+    if allocator().is_initialized() {
+        error!("{info}");
+        if terminal_initialized() {
+            println!("Panic: {}", info);
+        }
     }
     drop(lock);
 
-    loop {}
+    loop {
+        spin_loop();
+    }
 }
 
 /*
@@ -193,26 +210,26 @@ pub fn acpi_tables() -> &'static Mutex<AcpiTables<AcpiHandler>> {
 /// 'boot.rs' initializes this struct by calling 'init_initrd()' after obtaining the corresponding multiboot2 tag.
 static INIT_RAMDISK: Once<TarArchiveRef> = Once::new();
 
+pub fn get_initrd_frames(module: &ModuleTag) -> PhysFrameRange {
+    PhysFrameRange {
+        start: PhysFrame::from_start_address(PhysAddr::new(module.start_address() as u64))
+            .expect("Initial ramdisk is not page aligned"),
+        end: PhysFrame::from_start_address(
+            PhysAddr::new(module.end_address() as u64).align_up(PAGE_SIZE as u64),
+        )
+        .unwrap(),
+    }
+}
+
 pub fn init_initrd(module: &ModuleTag) {
     INIT_RAMDISK.call_once(|| {
-        let initrd_frames = PhysFrameRange {
-            start: PhysFrame::from_start_address(PhysAddr::new(module.start_address() as u64))
-                .expect("Initial ramdisk is not page aligned"),
-            end: PhysFrame::from_start_address(
-                PhysAddr::new(module.end_address() as u64).align_up(PAGE_SIZE as u64),
-            )
-            .unwrap(),
-        };
-        unsafe {
-            memory::frames::reserve(initrd_frames);
-        }
-
         let initrd_bytes = unsafe {
             core::slice::from_raw_parts(
                 module.start_address() as *const u8,
                 (module.end_address() - module.start_address()) as usize,
             )
         };
+
         TarArchiveRef::new(initrd_bytes)
             .expect("Failed to create TarArchiveRef from Multiboot2 module")
     });
@@ -239,8 +256,7 @@ pub fn allocator() -> &'static KernelAllocator {
 static LOGGER: Once<Logger> = Once::new();
 
 pub fn logger() -> &'static Logger {
-    LOGGER.call_once(Logger::new);
-    LOGGER.get().unwrap()
+    LOGGER.call_once(Logger::new)
 }
 
 /// Process Manager.
@@ -354,13 +370,11 @@ pub fn init_terminal(buffer: *mut u8, pitch: u32, width: u32, height: u32, bpp: 
     lfb_terminal.clear();
     TERMINAL.call_once(|| lfb_terminal);
 
-    scheduler().ready(Thread::new_kernel_thread(
-        || {
-            let mut cursor_thread = CursorThread::new(terminal());
-            cursor_thread.run();
-        },
-        "cursor",
-    ));
+    extern "sysv64" fn cursor() {
+        let mut cursor_thread = CursorThread::new(terminal());
+        cursor_thread.run();
+    }
+    scheduler().ready(Thread::new_kernel_thread(cursor, "cursor"));
 }
 
 pub fn terminal_initialized() -> bool {
@@ -380,6 +394,7 @@ static PS2: Once<Arc<PS2>> = Once::new();
 
 pub fn keyboard() -> Option<Arc<Keyboard>> {
     PS2.call_once(|| {
+        info!("Initializing PS/2 devices");
         let mut ps2 = PS2::new();
         match ps2.init_controller() {
             Ok(_) => match ps2.init_keyboard() {

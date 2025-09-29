@@ -7,25 +7,27 @@
    ║   - read   read bytes from an open object                               ║
    ║   - write  write bytes into an open object                              ║
    ║   - seek   set file pointer (for files)                                 ║
-   ║   - mkdi : create a directory                                           ║
+   ║   - mkdir  create a directory                                           ║
    ║   - touch  create a file                                                ║
+   ║   - mkfifo create a named pipe                                          ║
    ╟─────────────────────────────────────────────────────────────────────────╢
-   ║ Author: Michael Schoettner, Univ. Duesseldorf, 23.2.2025                ║
+   ║ Author: Michael Schoettner, Univ. Duesseldorf, 25.8.2025                ║
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
 
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use log::info;
+use log::{info, warn};
 use spin::{Mutex, Once};
 
-use super::traits::FileSystem;
 use super::lookup;
 use super::open_objects;
 use super::stat::Mode;
 use super::tmpfs;
+use super::traits::FileSystem;
 
+use crate::initrd;
 use naming::shared_types::{OpenOptions, RawDirent, SeekOrigin};
 use syscall::return_vals::Errno;
 
@@ -35,11 +37,19 @@ pub(super) static ROOT: Once<Arc<dyn FileSystem>> = Once::new();
 // current working directory
 static CWD: Mutex<String> = Mutex::new(String::new());
 
-/// Initilize the naming service (must be called once before using it).
+/// Initialize the naming service (must be called once before using it).
 pub fn init() {
     // Initialize ROOT with TmpFs
     ROOT.call_once(|| {
         let tmpfs = tmpfs::TmpFs::new();
+
+        for entry in initrd().entries() {
+            let res = tmpfs.create_static_file(entry.filename().as_str().unwrap(), entry.data());
+            if res.is_err() {
+                warn!("Failed to create static file in tmpfs: {}", entry.filename().as_str().unwrap());
+            }
+        }
+
         Arc::new(tmpfs)
     });
     open_objects::open_object_table_init();
@@ -51,9 +61,18 @@ pub fn init() {
 
 /// Open/create a named object referenced by `path` using the given `flags`. \
 /// Returns `Ok(object_handle)` or `Err`.
-pub fn open(path: &String, flags: OpenOptions) -> Result<usize, Errno> {
+pub fn open(path: &str, flags: OpenOptions) -> Result<usize, Errno> {
+    // avoid creating a file twice
+    if flags.contains(OpenOptions::CREATE) {
+        let result = lookup::lookup_named_object(path);
+        if result.is_ok() {
+            return Err(Errno::EEXIST);
+        }
+    }
+
+    // Try to open the object
     open_objects::open(path, flags).or_else(|e| {
-        if flags.contains(OpenOptions::CREATE) {
+        if flags.contains(OpenOptions::CREATE) && e != Errno::EEXIST {
             touch(path).and_then(|_| open_objects::open(path, flags))
         } else {
             Err(e)
@@ -191,7 +210,7 @@ pub fn readdir(dir_handle: usize, dentry: Option<&mut RawDirent>) -> Result<usiz
 pub fn cwd(buffer: &mut [u8]) -> Result<usize, Errno> {
     // Lock the CWD mutex to access its value
     let cwd = CWD.lock();
-    
+
     // Get the string as bytes
     let cwd_bytes = cwd.as_bytes();
 
@@ -222,7 +241,41 @@ pub fn cd(path: &String) -> Result<usize, Errno> {
             let mut cwd = CWD.lock();
             *cwd = path.clone();
             Ok(0)
-        },
+        }
+        Err(_) => {
+            // Handle the error here (e.g., logging or returning the error code)
+            Err(Errno::ENOTDIR)
+        }
+    }
+}
+
+/// Create a named pipe using `path`. \
+/// Returns `Ok(0)` or `Err(errno)`
+pub fn mkfifo(path: &str) -> Result<usize, Errno> {
+    // Split the path into components
+    let mut components: Vec<&str> = path.split("/").collect();
+
+    // Remove the last component (the name of the new file)
+    let new_pipe_name = components.pop();
+
+    // We need parent directory to create the new file
+    let parent_dir = if components.len() == 1 {
+        "/".to_string()
+    } else {
+        components.join("/") // Joins the remaining components
+    };
+
+    // Safely lookup the parent directory and create the new pipe
+    let result = lookup::lookup_dir(&parent_dir)
+        .and_then(|dir| {
+            new_pipe_name
+                .ok_or(Errno::EINVAL) // Handle missing file name
+                .and_then(|name| dir.create_pipe(name, Mode::new(0))) // Create the pipe
+        })
+        .map(|_| 0); // Convert the success result to 0
+
+    match result {
+        Ok(_) => Ok(0), // Successfully created the pipe
         Err(_) => {
             // Handle the error here (e.g., logging or returning the error code)
             Err(Errno::ENOTDIR)

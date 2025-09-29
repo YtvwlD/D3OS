@@ -1,46 +1,59 @@
 /* ╔═════════════════════════════════════════════════════════════════════════╗
    ║ Module: stack                                                           ║
    ╟─────────────────────────────────────────────────────────────────────────╢
-   ║ Memory for a stack (user or kernel). The stack will be accessed within  ║
-   ║ the kernel through a Vec and thus a Allocator is required.              ║
+   ║ Stack allocator for stacks and alloc functions.                         ║
    ║                                                                         ║
    ║ Public functions:                                                       ║
    ║   - alloc_kernel_stack      alloc frames for a kernel stack             ║
    ║   - alloc_user_stack        alloc page range for a user stack           ║
    ╟─────────────────────────────────────────────────────────────────────────╢
-   ║ Author: Fabian Ruhland & Michael Schoettner, HHU, 28.05.2025            ║
+   ║ Author: Fabian Ruhland & Michael Schoettner, HHU, 28.06.2025            ║
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
 
-use crate::consts::KERNEL_STACK_PAGES;
-use crate::memory::{PAGE_SIZE, frames};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::alloc::{AllocError, Allocator, Layout};
 use core::ptr::NonNull;
 use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering;
 use log::info;
-use x86_64::structures::paging::Page;
-use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::VirtAddr;
+use x86_64::structures::paging::Page;
+use x86_64::structures::paging::PageTableFlags;
 
-/// Allocate frames for a kernel stack for a thread with the given `pid` and `tid`.
-pub fn alloc_kernel_stack(pid: usize, tid: usize) -> Vec<u64, StackAllocator> {
-    let frames: PhysFrameRange = frames::alloc(KERNEL_STACK_PAGES);
+use crate::consts::KERNEL_STACK_PAGES;
+use crate::memory::vma::VmaType;
+use crate::memory::PAGE_SIZE;
+use crate::process::process::Process;
+
+/// Allocate memory for a kernel stack for a thread with the given `pid` and `tid`.
+/// A VMA is created in the address space of `process`.
+pub fn alloc_kernel_stack(process: &Arc<Process>, pid: usize, tid: usize, tag_str: &str) -> Vec<u64, StackAllocator> {
+
+    // Allocate physical frames for the kernel stack
+    let start_page = process.virtual_address_space.kernel_alloc_map_identity(
+        KERNEL_STACK_PAGES as u64,
+        PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
+        VmaType::KernelStack,
+        tag_str,
+    );
+
+    // Create a Vec for the allocated kernel stack 
     let mut kernel_stack = unsafe {
         Vec::from_raw_parts_in(
-            frames.start.start_address().as_u64() as *mut u64,
+            start_page.start.start_address().as_u64() as *mut u64,
             KERNEL_STACK_PAGES * PAGE_SIZE / 8,
             KERNEL_STACK_PAGES * PAGE_SIZE / 8,
             StackAllocator::new(
                 pid,
                 tid,
-                true,
-                frames.start.start_address().as_u64() as usize,
-                frames.end.start_address().as_u64() as usize,
+                start_page.start.start_address().as_u64() as usize,
+                start_page.end.start_address().as_u64() as usize,
             ),
         )
     };
+
     kernel_stack.clear(); // Clear the stack to avoid garbage values
     kernel_stack
 }
@@ -54,7 +67,7 @@ pub fn alloc_user_stack(pid: usize, tid: usize, start_addr: usize, size_in_bytes
             start_addr as *mut u64,
             size_in_bytes / 8,
             size_in_bytes / 8,
-            StackAllocator::new(pid, tid, false, start_addr, start_addr + size_in_bytes),
+            StackAllocator::new(pid, tid, start_addr, start_addr + size_in_bytes),
         )
     }
 }
@@ -62,18 +75,16 @@ pub fn alloc_user_stack(pid: usize, tid: usize, start_addr: usize, size_in_bytes
 pub struct StackAllocator {
     pid: usize, // process id the stack belongs to
     tid: usize, // thread id the stack belongs to
-    kernel: bool,
     start_addr: AtomicUsize, // start address of the first page used for the stack
     end_addr: AtomicUsize,   // end address of the last page used for the stack
 }
 
 impl StackAllocator {
-    pub fn new(pid: usize, tid: usize, kernel: bool, start_addr: usize, end_addr: usize) -> Self {
+    pub fn new(pid: usize, tid: usize, start_addr: usize, end_addr: usize) -> Self {
         // Ensure that start_addr and end_addr are page-aligned
         StackAllocator {
             pid,
             tid,
-            kernel,
             start_addr: AtomicUsize::new(start_addr),
             end_addr: AtomicUsize::new(end_addr),
         }
@@ -105,16 +116,15 @@ impl StackAllocator {
 }
 
 unsafe impl Allocator for StackAllocator {
-
-    /// Allocate should never be called. Memory is explictly allocated, see above functions. 
-    /// It is required for working with a Vec. 
+    /// Allocate should never be called. Memory is explictly allocated, see above functions.
+    /// It is required for working with a Vec.
     fn allocate(&self, _layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-     //   info!("Allocating stack memory for pid: {}, tid: {}", self.pid, self.tid);
+        //   info!("Allocating stack memory for pid: {}, tid: {}", self.pid, self.tid);
         Err(AllocError)
     }
 
     /// Deallocate is called when a thread terminates.
-    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+    unsafe fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {
         // memory is automaticallyfreed when page tables are dropped */
         info!("Deallocating stack memory for pid: {}, tid: {}", self.pid, self.tid);
     }

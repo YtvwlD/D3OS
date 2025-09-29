@@ -6,7 +6,9 @@
    ║ Author: Fabian Ruhland, 31.8.2024, HHU                                  ║
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
+
 #![no_std]
+
 extern crate alloc;
 
 pub mod env;
@@ -31,7 +33,7 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn entry() {
+extern "sysv64" fn entry() {
     syscall(SystemCall::MapMemory, &[env::HEAP_START, env::HEAP_SIZE])
         .expect("Could not create user heap.");
 
