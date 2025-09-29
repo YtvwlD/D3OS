@@ -19,7 +19,6 @@ use core::result::Result;
 use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering;
 use core::{fmt, ptr};
-use log::info;
 use naming::shared_types::{DirEntry, FileType, OpenOptions};
 use nolock::queues::mpmc;
 use spin::rwlock::RwLock;

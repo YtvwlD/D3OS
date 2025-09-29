@@ -13,9 +13,6 @@
 
 use alloc::alloc::alloc_zeroed;
 use core::alloc::Layout;
-use core::num;
-use core::num::NonZeroUsize;
-use log::info;
 use x86_64::PhysAddr;
 use x86_64::structures::paging::Size4KiB;
 use x86_64::structures::paging::{PhysFrame, frame::PhysFrameRange};
