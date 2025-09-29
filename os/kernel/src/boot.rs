@@ -18,7 +18,7 @@ use crate::memory::vma::VmaType;
 use crate::memory::{dram, frames_lf, nvmem, PAGE_SIZE};
 use crate::process::thread::Thread;
 use crate::syscall::{sys_vmem, syscall_dispatcher};
-use crate::{acpi_tables, allocator, apic, built_info, consts, gdt, get_initrd_frames, init_acpi_tables, init_apic, init_cpu_info, init_initrd, init_pci, init_serial_port, init_terminal, initrd, keyboard, logger, memory, network, process_manager, scheduler, serial_port, terminal, timer, tss};
+use crate::{acpi_tables, allocator, apic, built_info, consts, gdt, get_initrd_frames, init_acpi_tables, init_apic, init_cpu_info, init_initrd, init_pci, init_serial_port, init_terminal, initrd, ipi, keyboard, logger, memory, network, process_manager, scheduler, serial_port, terminal, timer, tss};
 use crate::{efi_services_available, naming, storage};
 use alloc::format;
 use alloc::string::ToString;
@@ -86,7 +86,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     let kernel_image_region = kernel_image_region();
     unsafe {
         memory::frames::boot_reserve(kernel_image_region);
-        memory::frames::reserve(ap_boot_region());
+        memory::frames::boot_reserve(ap_boot_region());
     }
     // also reserve frames for initrd
     let initrd_tag = multiboot

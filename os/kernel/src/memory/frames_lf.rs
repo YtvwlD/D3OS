@@ -17,6 +17,7 @@ use x86_64::PhysAddr;
 use x86_64::structures::paging::Size4KiB;
 use x86_64::structures::paging::{PhysFrame, frame::PhysFrameRange};
 use spin::Once;
+use log::info;
 
 use crate::memory::{PAGE_SIZE, dram};
 
