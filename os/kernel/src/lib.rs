@@ -17,6 +17,7 @@
 #![allow(internal_features)]
 #![no_std]
 
+use alloc::boxed::Box;
 use crate::device::apic::Apic;
 use crate::device::cpu::Cpu;
 use crate::device::lfb_terminal::{CursorThread, LFBTerminal};
@@ -35,18 +36,20 @@ use crate::memory::heap::KernelAllocator;
 use crate::process::process_manager::ProcessManager;
 use crate::process::scheduler::Scheduler;
 use crate::process::thread::Thread;
-use crate::syscall::syscall_dispatcher::CoreLocalStorage;
 use ::log::{Level, Log, Record, error, info};
 use acpi::AcpiTables;
 use alloc::sync::Arc;
 use x86_64::instructions::interrupts;
 use core::fmt::Arguments;
 use core::hint::spin_loop;
+use core::ops::Deref;
 use core::panic::PanicInfo;
+use core::ptr;
 use multiboot2::ModuleTag;
 use spin::{Mutex, Once, RwLock};
 use tar_no_std::TarArchiveRef;
-use x86_64::PhysAddr;
+use x86_64::{PhysAddr, VirtAddr};
+use x86_64::registers::model_specific::KernelGsBase;
 use x86_64::structures::gdt::GlobalDescriptorTable;
 use x86_64::structures::idt::InterruptDescriptorTable;
 use x86_64::structures::paging::PhysFrame;
@@ -169,14 +172,127 @@ pub fn idt() -> &'static Mutex<InterruptDescriptorTable> {
 }
 
 /// Core Local Storage.
-/// Contains information that is needed by the syscall handler.
-/// It is never accessed directly, but via the swapgs instruction.
+/// Contains information, which is needed by the syscall handler.
+/// The TSS address is never accessed directly, but via the swapgs instruction.
 /// 'boot.rs' sets up the gs base register with a pointer to this struct.
 /// Once multicore is implemented, we need one of these per core.
+
+#[repr(C, packed)]
+pub struct CoreLocalStorage {
+    self_ptr: *const CoreLocalStorage, //easy return through GS Segment with deref (with base)
+    tss_rsp0_ptr: VirtAddr,
+    user_rsp: VirtAddr,
+    id: u32,
+}
+
+impl CoreLocalStorage {
+    pub const fn new(id: u32) -> Self {
+        Self {
+            self_ptr: 0 as *const CoreLocalStorage,
+            tss_rsp0_ptr: VirtAddr::zero(),
+            user_rsp: VirtAddr::zero(),
+            id: id,
+        }
+    }
+}
+/* old Stuff
 static CORE_LOCAL_STORAGE: Mutex<CoreLocalStorage> = Mutex::new(CoreLocalStorage::new());
 
 pub fn core_local_storage() -> &'static Mutex<CoreLocalStorage> {
     &CORE_LOCAL_STORAGE
+}
+syscall_dispatcher Code:
+    let mut core_local_storage = core_local_storage().lock();
+    core_local_storage.tss_rsp0_ptr =
+        VirtAddr::new(ptr::from_ref(tss().lock().deref()) as u64 + size_of::<u32>() as u64);
+    KernelGsBase::write(VirtAddr::new(
+        ptr::from_ref(core_local_storage.deref()) as u64
+    ));
+*/
+
+// Returns a new CoreLocalStorage Struct with static lifetime
+fn new_core_local_storage(id: u32) -> *mut CoreLocalStorage {
+    let cpu_local = Box::new(CoreLocalStorage::new(id));
+    Box::into_raw(cpu_local) as *mut CoreLocalStorage
+}
+
+// Installs a Cpu Local Sorage on the GS segment
+fn install_gs_base(core_local_ptr: *mut CoreLocalStorage) {
+    unsafe { (*core_local_ptr).self_ptr = core_local_ptr; }
+    KernelGsBase::write(VirtAddr::from_ptr(core_local_ptr));
+}
+
+// Returns the whole struct from the GS segment
+#[inline(always)]
+pub fn core_local_ptr() -> *mut CoreLocalStorage {
+    let struct_ptr: u64;
+    unsafe {
+        core::arch::asm!(
+        "mov {}, gs:[0]",
+        out(reg) struct_ptr,
+        options(nostack, preserves_flags)
+        );
+    }
+    struct_ptr as *mut CoreLocalStorage
+}
+
+// Returns the core id from the GS segment
+#[inline(always)]
+pub fn current_core_id() -> u32 {
+    let id: u32;
+    unsafe {
+        core::arch::asm!(
+        "mov {tmp:e}, gs:[24]",    //id is after 3 pointers (3*8 bytes)
+        tmp = out(reg) id,
+        options(nostack, preserves_flags, readonly)
+        );
+    }
+    id
+}
+
+// wraps the code of another method with "swapgs" calls to get access to the
+// kernelGS-Base instead of the GS-Base during execution
+// also saves the current IF and restores it afterwards
+#[inline(always)]
+pub fn with_kernel_gs<R>(f: impl FnOnce() -> R) -> R {
+    unsafe {
+        //save current rflags to restore interrupt flag afterwards
+        let mut rflags: u64;
+        core::arch::asm!(
+        "pushfq",
+        "pop {rflags}",
+        rflags = out(reg) rflags,
+        options(preserves_flags)
+        );
+        core::arch::asm!("cli", options(nomem, nostack));
+        core::arch::asm!("swapgs", options(nomem, nostack, preserves_flags));
+
+        let ret = f();
+
+        // Swap GS back first, then restore IF if it was previously set
+        core::arch::asm!("swapgs", options(nomem, nostack, preserves_flags));
+        if (rflags & (1 << 9)) != 0 {
+            core::arch::asm!("sti", options(nomem, nostack));
+        }
+        ret
+    }
+}
+
+fn init_tss_cls() {
+    let tss_rsp0_ptr =
+        VirtAddr::new(ptr::from_ref(tss().lock().deref()) as u64 + size_of::<u32>() as u64);
+    unsafe { (*core_local_ptr()).tss_rsp0_ptr = tss_rsp0_ptr; }
+}
+
+fn debug_cls() {
+
+    let tss_rsp0 = unsafe {(*core_local_ptr()).tss_rsp0_ptr};
+    let user_rsp = unsafe {(*core_local_ptr()).user_rsp};
+    let id = unsafe {(*core_local_ptr()).id};
+
+    info!("Local Struct at adress: {:p}\
+        \n\t TSS_rsp0: {:p} \n\t user_rsp: {:p} \n\t Core-Id: {}",
+        core_local_ptr(), tss_rsp0, user_rsp, id);
 }
 
 /// ACPI Tables.
