@@ -3,6 +3,7 @@
 extern crate alloc;
 
 use concurrent::{process, thread};
+use concurrent::core::current_core_id;
 #[allow(unused_imports)]
 use runtime::*;
 use terminal::{print, println};
@@ -13,14 +14,13 @@ pub fn main() {
     let process = process::current().unwrap();
     let thread = thread::current().unwrap();
 
-    println!("Hello from Thread [{}] in Process [{}]!\n", thread.id(), process.id());
+    println!("Hello from Thread [{}] in Process [{}] from Core [{}]!\n", thread.id(), process.id(), current_core_id().unwrap());
 
     println!("Arguments:");
     let args = env::args();
     for arg in args {
         println!("  {}", arg);
     }
-
     
     let v = thread::create(|| {
         println!("Hello from the second thread!");

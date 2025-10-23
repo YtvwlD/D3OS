@@ -110,6 +110,7 @@ impl SyscallTable {
                 sys_sock_close as *const _,
                 sys_get_ip_adresses as *const _,
                 sys_mkfifo as *const _,
+                sys_core_id as *const _,
             ],
         }
     }

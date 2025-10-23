@@ -13,7 +13,7 @@ use core::ptr::slice_from_raw_parts;
 use core::str::from_utf8;
 use x86_64::VirtAddr;
 use syscall::return_vals::Errno;
-use crate::{initrd, process_manager, scheduler};
+use crate::{current_core_id, initrd, process_manager, scheduler};
 use crate::process::thread::Thread;
 
 
@@ -36,6 +36,10 @@ pub extern "sysv64" fn sys_thread_create(kickoff_addr: u64, entry: extern "sysv6
 
 pub extern "sysv64" fn sys_thread_id() -> isize {
     scheduler().current_thread().id() as isize
+}
+
+pub extern "sysv64" fn sys_core_id() -> isize {
+    current_core_id() as isize
 }
 
 pub extern "sysv64" fn sys_thread_switch() -> isize {
