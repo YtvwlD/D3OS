@@ -219,7 +219,8 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
 
     interrupt_dispatcher::setup_idt();
 
-    install_gs_base(new_core_local_storage(0)); //prerequisite for scheduler & dispatcher
+    // Prerequisite for scheduler & dispatcher
+    install_gs_base(new_core_local_storage(0));
     syscall_dispatcher::init();
 
     init_apic();

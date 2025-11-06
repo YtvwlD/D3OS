@@ -18,8 +18,8 @@
    ║   - switch_thread_from_interrupt  switch thread, called from interrupt  ║
    ║   - switch_thread_no_interrupt    switch thread, not called from int.   ║
    ║   - current_ids            get the (pid, tid) of the current thread     ║
-   ║   - block                   put the calling thread into blocked mode    ║
-   ║   - deblock                 wake up a blocked thread                    ║
+   ║   - block                  put the calling thread into blocked mode     ║
+   ║   - deblock                wake up a blocked thread                     ║
    ╟─────────────────────────────────────────────────────────────────────────╢
    ║ Author: Fabian Ruhland, 05.09.2025, HHU                                 ║
    ╚═════════════════════════════════════════════════════════════════════════╝
