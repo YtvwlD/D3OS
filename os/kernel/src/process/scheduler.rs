@@ -419,6 +419,7 @@ impl Scheduler {
     }
 
     /// Description: Helper function returning `ReadyState` and `Map` of scheduler, each in a MutexGuard
+    /// switches Thread on fail, loops back after
     fn get_ready_state_and_join_map(&self) -> (MutexGuard<'_, ReadyState>, MutexGuard<'_, Map<usize, Vec<Arc<Thread>>>>) {
         loop {
             let ready_state = self.get_ready_state();
