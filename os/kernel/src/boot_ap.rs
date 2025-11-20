@@ -1,4 +1,3 @@
-use alloc::boxed::Box;
 use core::any::Any;
 use log::info;
 use crate::{current_core_id, debug_cls, install_gs_base, new_core_local_storage, timer, with_kernel_gs};
