@@ -15,7 +15,10 @@ pub extern "C" fn startup_ap(cpu_id: u32) {
     install_gs_base(new_core_local_storage(cpu_id));
     scheduler::cpu_mark_online();
 
-    let mut l = 5; //cpu_id;
+    //new local apic
+    //start timer
+
+    let mut l = 5; //loop l times;
     loop{
         timer().wait(1000);
         info!("    Application processor still running.. (id:{})", cpu_id);

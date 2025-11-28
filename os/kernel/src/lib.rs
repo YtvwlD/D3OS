@@ -201,6 +201,12 @@ impl CoreLocalStorage {
             ready_state: Box::leak(Box::new(Mutex::new(ReadyState::new()))),
         }
     }
+
+    #[inline(always)]
+    pub fn ready_state(&self) -> &Mutex<ReadyState> {
+        assert!(!self.ready_state.is_null());
+        unsafe { &*self.ready_state }
+    }
     
     #[inline(always)]
     pub fn local_apic(&self) -> &Mutex<LocalApic> {
@@ -333,10 +339,14 @@ fn debug_cls() {
     let tss_rsp0 = unsafe {cls().tss_rsp0_ptr};
     let user_rsp = unsafe {cls().user_rsp};
     let id = unsafe {cls().id};
+    let local_apic = unsafe { cls().local_apic };
+    let timer_ticks_per_ms = unsafe {cls().timer_ticks_per_ms};
+    let ready_state = unsafe {cls().ready_state};
 
     info!("Local Struct at adress: {:p}\
-        \n\t TSS_rsp0: {:p} \n\t user_rsp: {:p} \n\t Core-Id: {}",
-        cls_ptr(), tss_rsp0, user_rsp, id);
+        \n\t TSS_rsp0: {:p} \n\t user_rsp: {:p} \n\t Core-Id: {}\
+        \n\t Local APIC: {:?} \n\t Timer Ticks per ms: {}\n\t Ready State: {:p}",
+        cls_ptr(), tss_rsp0, user_rsp, id, local_apic, timer_ticks_per_ms, ready_state);
 }
 
 /// ACPI Tables.
