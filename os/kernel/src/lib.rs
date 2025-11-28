@@ -213,7 +213,9 @@ syscall_dispatcher Code:
 // Returns a new CoreLocalStorage Struct with static lifetime
 fn new_core_local_storage(id: u32) -> *mut CoreLocalStorage {
     let cpu_local = Box::new(CoreLocalStorage::new(id));
-    Box::leak(cpu_local) as *mut CoreLocalStorage
+    let addr = Box::leak(cpu_local) as *mut CoreLocalStorage;
+    unsafe { (*addr).self_ptr = addr; }
+    addr as *mut CoreLocalStorage
 }
 
 // Installs a Cpu Local Sorage on the GS segment
