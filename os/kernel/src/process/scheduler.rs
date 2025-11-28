@@ -53,7 +53,7 @@ pub fn cpu_count() -> u32 {
 }
 
 /// Everything related to the threads in ready state in the scheduler
-struct ReadyState {
+pub struct ReadyState {
     initialized: bool,
     current_thread: Option<Arc<Thread>>,
     ready_queue: VecDeque<Arc<Thread>>,
