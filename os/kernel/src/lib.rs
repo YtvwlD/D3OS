@@ -34,7 +34,7 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::acpi_handler::AcpiHandler;
 use crate::memory::heap::KernelAllocator;
 use crate::process::process_manager::ProcessManager;
-use crate::process::scheduler::Scheduler;
+use crate::process::scheduler::{ReadyState, Scheduler};
 use crate::process::thread::Thread;
 use ::log::{Level, Log, Record, error, info};
 use acpi::AcpiTables;
@@ -48,6 +48,7 @@ use core::ptr;
 use multiboot2::ModuleTag;
 use spin::{Mutex, Once, RwLock};
 use tar_no_std::TarArchiveRef;
+use x2apic::lapic::LocalApic;
 use x86_64::{PhysAddr, VirtAddr};
 use x86_64::registers::model_specific::KernelGsBase;
 use x86_64::structures::gdt::GlobalDescriptorTable;
@@ -177,22 +178,44 @@ pub fn idt() -> &'static Mutex<InterruptDescriptorTable> {
 /// 'boot.rs' sets up the gs base register with a pointer to this struct.
 /// Once multicore is implemented, we need one of these per core.
 
-#[repr(C, packed)]
+#[repr(C)]
 pub struct CoreLocalStorage {
     self_ptr: *const CoreLocalStorage, //easy return through GS Segment with deref (with base)
     tss_rsp0_ptr: VirtAddr,
     user_rsp: VirtAddr,
     id: u32,
+    local_apic: *const Mutex<LocalApic>,
+    timer_ticks_per_ms: usize,
+    ready_state: *const Mutex<ReadyState>,
 }
 
 impl CoreLocalStorage {
-    pub const fn new(id: u32) -> Self {
+    pub fn new(id: u32) -> Self {
         Self {
             self_ptr: 0 as *const CoreLocalStorage,
             tss_rsp0_ptr: VirtAddr::zero(),
             user_rsp: VirtAddr::zero(),
             id: id,
+            local_apic: ptr::null(),
+            timer_ticks_per_ms: 0,
+            ready_state: Box::leak(Box::new(Mutex::new(ReadyState::new()))),
         }
+    }
+    
+    #[inline(always)]
+    pub fn local_apic(&self) -> &Mutex<LocalApic> {
+        assert!(!self.local_apic.is_null());
+        unsafe { &*self.local_apic }
+    }
+
+    pub fn set_local_apic_ptr(&mut self, lapic_ptr: *const Mutex<LocalApic>) {
+        assert!(!lapic_ptr.is_null());
+        self.local_apic = lapic_ptr;
+    }
+
+    pub fn set_timer_ticks_per_ms(&mut self, ticks: usize) {
+        assert_ne!(ticks, 0);
+        self.timer_ticks_per_ms = ticks;
     }
 }
 /* old Stuff
