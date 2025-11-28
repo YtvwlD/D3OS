@@ -22,7 +22,7 @@ use crate::syscall::sys_concurrent::{sys_core_id, sys_process_execute_binary, sy
 use crate::syscall::sys_terminal::{sys_terminal_read, sys_terminal_read_nb, sys_terminal_write};
 use crate::syscall::sys_naming::*;
 
-use crate::{init_tss_cls, tss, with_kernel_gs};
+use crate::{init_tss_cls, tss};
 use log::info;
 use x86_64::registers::rflags::RFlags;
 
@@ -59,7 +59,7 @@ pub fn init() {
 
     // Initialize TSS rsp0 in core local storage (accessible via 'swapgs')
     //let mut core_local_storage = core_local_storage().lock();
-    with_kernel_gs(|| {init_tss_cls()});
+    init_tss_cls();
 }
 
 #[unsafe(no_mangle)]

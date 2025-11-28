@@ -1,6 +1,6 @@
 use core::any::Any;
 use log::info;
-use crate::{current_core_id, debug_cls, install_gs_base, new_core_local_storage, timer, with_kernel_gs};
+use crate::{current_core_id, debug_cls, install_gs_base, new_core_local_storage, timer};
 use raw_cpuid::CpuId;
 use crate::process::scheduler;
 
@@ -26,7 +26,7 @@ pub extern "C" fn startup_ap(cpu_id: u32) {
 
     let cpuid = CpuId::new();   //CpuId-Crate
 
-    let curr_cpu_id = with_kernel_gs(|| {current_core_id()});
+    let curr_cpu_id = current_core_id();
 
     if let Some(feat) = cpuid.get_feature_info() {
         let has_tsc = feat.has_tsc();
@@ -38,6 +38,6 @@ pub extern "C" fn startup_ap(cpu_id: u32) {
         //info!(" Cpu ID should be {} and cpuLocal says {}", cpu_id, current_core_id());
     }
 
-    with_kernel_gs(|| {debug_cls()});
+    debug_cls();
     loop {}
 }

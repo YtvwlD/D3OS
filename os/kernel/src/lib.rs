@@ -226,7 +226,7 @@ fn install_gs_base(core_local_ptr: *mut CoreLocalStorage) {
 
 // Returns the whole struct from the GS segment
 #[inline(always)]
-pub fn core_local_ptr() -> *mut CoreLocalStorage {
+fn cls_ptr_from_gs() -> *mut CoreLocalStorage {
     let struct_ptr: u64;
     unsafe {
         core::arch::asm!(
@@ -237,6 +237,19 @@ pub fn core_local_ptr() -> *mut CoreLocalStorage {
     }
     struct_ptr as *mut CoreLocalStorage
 }
+#[inline(always)]
+pub fn cls_ptr() -> *mut CoreLocalStorage {
+    with_kernel_gs( || { cls_ptr_from_gs()})
+}
+#[inline(always)]
+pub fn cls<'a>() -> &'a CoreLocalStorage {
+    unsafe { &*cls_ptr() }
+}
+#[inline(always)]
+pub fn cls_mut<'a>() -> &'a mut CoreLocalStorage {
+    unsafe { &mut *cls_ptr() }
+}
+
 
 // Returns the core id from the GS segment
 #[inline(always)]
@@ -283,18 +296,18 @@ pub fn with_kernel_gs<R>(f: impl FnOnce() -> R) -> R {
 fn init_tss_cls() {
     let tss_rsp0_ptr =
         VirtAddr::new(ptr::from_ref(tss().lock().deref()) as u64 + size_of::<u32>() as u64);
-    unsafe { (*core_local_ptr()).tss_rsp0_ptr = tss_rsp0_ptr; }
+    unsafe { cls_mut().tss_rsp0_ptr = tss_rsp0_ptr; }
 }
 
 fn debug_cls() {
 
-    let tss_rsp0 = unsafe {(*core_local_ptr()).tss_rsp0_ptr};
-    let user_rsp = unsafe {(*core_local_ptr()).user_rsp};
-    let id = unsafe {(*core_local_ptr()).id};
+    let tss_rsp0 = unsafe {cls().tss_rsp0_ptr};
+    let user_rsp = unsafe {cls().user_rsp};
+    let id = unsafe {cls().id};
 
     info!("Local Struct at adress: {:p}\
         \n\t TSS_rsp0: {:p} \n\t user_rsp: {:p} \n\t Core-Id: {}",
-        core_local_ptr(), tss_rsp0, user_rsp, id);
+        cls_ptr(), tss_rsp0, user_rsp, id);
 }
 
 /// ACPI Tables.
