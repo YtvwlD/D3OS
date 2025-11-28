@@ -1,7 +1,7 @@
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::memory::vma::VmaType;
-use crate::{acpi_tables, allocator, interrupt_dispatcher, process_manager, scheduler, timer};
+use crate::{acpi_tables, allocator, cls, cls_mut, current_core_id, interrupt_dispatcher, process_manager, scheduler, timer};
 use acpi::InterruptModel;
 use acpi::madt::Madt;
 use acpi::platform::interrupt::{InterruptSourceOverride, NmiSource, Polarity, TriggerMode};
@@ -17,11 +17,11 @@ use x2apic::lapic::{LocalApic, LocalApicBuilder, TimerDivide, TimerMode};
 use x86_64::structures::paging::PageTableFlags;
 
 pub struct Apic {
-    local_apic: Mutex<LocalApic>,
+    //local_apic: Mutex<LocalApic>,
     io_apics: Vec<(Mutex<IoApic>, u32)>, // (0: IO APIC instance, 1: Base Global System Interrupt)
     irq_overrides: Vec<InterruptSourceOverride>,
     nmi_sources: Vec<NmiSource>,
-    timer_ticks_per_ms: usize,
+    //timer_ticks_per_ms: usize,
 }
 
 unsafe impl Send for Apic {}
@@ -90,7 +90,8 @@ impl Apic {
         let mut io_apics = Vec::<(Mutex<IoApic>, u32)>::new();
 
         // Create Local APIC instance
-        let local_apic = Mutex::new(Self::create_local_apic(&madt));
+        let kernel_local_apic = Box::new(Mutex::new(Self::create_local_apic(&madt)));
+        cls_mut().set_local_apic_ptr(Box::leak(kernel_local_apic));
 
         match int_model.0 {
             InterruptModel::Apic(apic_desc) => {
@@ -229,7 +230,7 @@ impl Apic {
             entry.set_flags(flags);
 
             // Needs to be executed in unsafe block; At this point, the APIC has been initialized successfully, so we can assume that reading the MSR works.
-            entry.set_dest(unsafe { local_apic.lock().id() } as u8);
+            entry.set_dest(unsafe { cls().local_apic().lock().id() } as u8);
 
             // Find the correct IO APIC for the given NMI and set the corresponding entry in its redirection table
             match io_apic_for_target(&io_apics, nmi.global_system_interrupt) {
@@ -252,19 +253,18 @@ impl Apic {
                 "   Enabling Local APIC [{}]",
                 cpu_info.boot_processor.local_apic_id
             );
-            local_apic.lock().enable();
+            cls().local_apic().lock().enable();
         }
 
         // Calibrate APIC timer
-        let timer_ticks_per_ms = Apic::calibrate_timer(&mut local_apic.lock());
+        let timer_ticks_per_ms = Apic::calibrate_timer(&mut cls().local_apic().lock());
+        cls_mut().set_timer_ticks_per_ms(timer_ticks_per_ms);
         info!("   APIC Timer ticks per millisecond: [{timer_ticks_per_ms}]");
 
         Self {
-            local_apic,
             io_apics,
             irq_overrides,
             nmi_sources,
-            timer_ticks_per_ms,
         }
     }
 
@@ -328,14 +328,14 @@ impl Apic {
     }
 
     pub fn end_of_interrupt(&self) {
-        let mut local_apic = self.local_apic.try_lock();
+        let mut local_apic = cls().local_apic().try_lock();
         while local_apic.is_none() {
             // It its extremely unlikely, that the local APIC is locked during an interrupt,
             // but if it happens, the whole system would hang, trying to send an EOI.
             unsafe {
-                self.local_apic.force_unlock();
+                cls_mut().local_apic().force_unlock();
             }
-            local_apic = self.local_apic.try_lock();
+            local_apic = cls().local_apic().try_lock();
         }
 
         unsafe {
@@ -344,12 +344,12 @@ impl Apic {
     }
 
     pub fn start_timer(&self, interval_ms: usize) {
-        let mut local_apic = self.local_apic.lock();
+        let mut local_apic = cls().local_apic().lock();
 
         unsafe {
             local_apic.set_timer_divide(TimerDivide::Div1);
             local_apic.set_timer_mode(TimerMode::Periodic);
-            local_apic.set_timer_initial((self.timer_ticks_per_ms * interval_ms) as u32);
+            local_apic.set_timer_initial((cls().timer_ticks_per_ms * interval_ms) as u32);
             local_apic.enable_timer();
         }
 
