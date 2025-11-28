@@ -251,9 +251,15 @@ pub fn cls_mut<'a>() -> &'a mut CoreLocalStorage {
 }
 
 
-// Returns the core id from the GS segment
+// Returns the core id from the GS segment after switching back and forth
 #[inline(always)]
 pub fn current_core_id() -> u32 {
+    with_kernel_gs( || { current_core_id_from_gs()})
+}
+
+// Returns the core id from the GS segment
+#[inline(always)]
+pub fn current_core_id_from_gs() -> u32 {
     let id: u32;
     unsafe {
         core::arch::asm!(
