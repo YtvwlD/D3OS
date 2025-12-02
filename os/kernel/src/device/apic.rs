@@ -90,7 +90,7 @@ impl Apic {
         let mut io_apics = Vec::<(Mutex<IoApic>, u32)>::new();
 
         // Create Local APIC instance
-        let kernel_local_apic = Box::new(Mutex::new(Self::create_local_apic(&madt)));
+        let kernel_local_apic = Box::new(Mutex::new(Self::create_local_apic(&madt, true)));
         cls_mut().set_local_apic_ptr(Box::leak(kernel_local_apic));
 
         match int_model.0 {
@@ -267,25 +267,65 @@ impl Apic {
             nmi_sources,
         }
     }
+    pub fn set_new_local_apic() {
+        info!("Initializing Local_apic for CPU [{}]", current_core_id());
 
-    fn create_local_apic(madt: &Madt) -> LocalApic {
-        let process = process_manager().read().kernel_process().unwrap();
+        // Check if APIC is available
+        let cpuid = CpuId::new();
+        if cpuid.get_feature_info().is_none() {
+            panic!("APIC: Failed to read CPU ID features!")
+        }
 
+        // Find APIC relevant structures in ACPI tables
+        let madt_mapping = acpi_tables()
+            .lock()
+            .find_table::<Madt>()
+            .expect("MADT not available");
+        let madt = madt_mapping.get();
+
+        // Create Local APIC instance
+        let local_apic = Mutex::new(Self::create_local_apic(&madt, false));
+
+        // Initialization of global Apic should be finished -> Enable Local Apic
+        unsafe {
+            info!(
+                "   Enabling Local APIC for Core [{}]",
+                current_core_id()
+            );
+            local_apic.lock().enable();
+        }
+
+        // Calibrate APIC timer
+        let timer_ticks_per_ms = Apic::calibrate_timer(&mut local_apic.lock());
+        info!("   APIC Timer ticks per millisecond: [{timer_ticks_per_ms}]");
+        cls_mut().set_timer_ticks_per_ms(timer_ticks_per_ms);
+
+        let boxed_local_apic = Box::new(local_apic);
+        cls_mut().set_local_apic_ptr(Box::leak(boxed_local_apic));
+    }
+
+
+    fn create_local_apic(madt: &Madt, kernel_core: bool) -> LocalApic {
         let lapic_registers_phys_addr = madt.local_apic_address as u64;
-        
-        let lapic_registers_page = process.virtual_address_space.kernel_map_devm_identity(
-            lapic_registers_phys_addr,
-            lapic_registers_phys_addr + PAGE_SIZE as u64,
-            PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE,
-            VmaType::DeviceMemory,
-            "lapic",
-        );
+
+        if kernel_core {
+            info!("   Local APIC registers at: {:#x}", lapic_registers_phys_addr);
+            let process = process_manager().read().kernel_process().unwrap();
+
+            let _lapic_registers_page = process.virtual_address_space.kernel_map_devm_identity(
+                lapic_registers_phys_addr,
+                lapic_registers_phys_addr + PAGE_SIZE as u64,
+                PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE,
+                VmaType::DeviceMemory,
+                "lapic",
+            );
+        }
 
         LocalApicBuilder::new()
             .timer_vector(InterruptVector::ApicTimer as usize)
             .error_vector(InterruptVector::ApicError as usize)
             .spurious_vector(InterruptVector::Spurious as usize)
-            .set_xapic_base(lapic_registers_page.start_address().as_u64())
+            .set_xapic_base(lapic_registers_phys_addr)
             .build()
             .unwrap_or_else(|err| panic!("Failed to initialize Local APIC ({})!", err))
     }
