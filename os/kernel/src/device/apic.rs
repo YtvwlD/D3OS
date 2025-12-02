@@ -1,7 +1,7 @@
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::memory::vma::VmaType;
-use crate::{acpi_tables, allocator, cls, cls_mut, current_core_id, interrupt_dispatcher, process_manager, scheduler, timer};
+use crate::{acpi_tables, allocator, apic, cls, cls_mut, current_core_id, interrupt_dispatcher, process_manager, scheduler, timer, APIC};
 use acpi::InterruptModel;
 use acpi::madt::Madt;
 use acpi::platform::interrupt::{InterruptSourceOverride, NmiSource, Polarity, TriggerMode};
@@ -21,7 +21,7 @@ pub struct Apic {
     io_apics: Vec<(Mutex<IoApic>, u32)>, // (0: IO APIC instance, 1: Base Global System Interrupt)
     irq_overrides: Vec<InterruptSourceOverride>,
     nmi_sources: Vec<NmiSource>,
-    //timer_ticks_per_ms: usize,
+    timer_ticks_per_ms: usize,
 }
 
 unsafe impl Send for Apic {}
@@ -265,6 +265,7 @@ impl Apic {
             io_apics,
             irq_overrides,
             nmi_sources,
+            timer_ticks_per_ms,
         }
     }
     pub fn set_new_local_apic() {
@@ -296,7 +297,9 @@ impl Apic {
         }
 
         // Calibrate APIC timer
-        let timer_ticks_per_ms = Apic::calibrate_timer(&mut local_apic.lock());
+        //TODO: not working over qemu right now:
+        //let timer_ticks_per_ms = Apic::calibrate_timer(&mut local_apic.lock());
+        let timer_ticks_per_ms = apic().timer_ticks_per_ms;
         info!("   APIC Timer ticks per millisecond: [{timer_ticks_per_ms}]");
         cls_mut().set_timer_ticks_per_ms(timer_ticks_per_ms);
 

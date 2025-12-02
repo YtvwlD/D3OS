@@ -1,7 +1,8 @@
 use core::any::Any;
 use log::info;
-use crate::{current_core_id, debug_cls, install_gs_base, new_core_local_storage, timer};
+use crate::{current_core_id, debug_cls, install_gs_base, new_core_local_storage, timer, APIC};
 use raw_cpuid::CpuId;
+use crate::device::apic::Apic;
 use crate::process::scheduler;
 
 // First rust function called from assembly boot code for an
@@ -15,7 +16,11 @@ pub extern "C" fn startup_ap(cpu_id: u32) {
     install_gs_base(new_core_local_storage(cpu_id));
     scheduler::cpu_mark_online();
 
-    //new local apic
+    // Wait until the bootstrap processor has fully initialized the global APIC
+    let _apic_ref = APIC.wait();
+
+    info!("    APIC is ready!");
+    Apic::set_new_local_apic();
     //start timer
 
     let mut l = 5; //loop l times;
