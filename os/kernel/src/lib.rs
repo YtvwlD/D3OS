@@ -331,17 +331,17 @@ pub fn with_kernel_gs<R>(f: impl FnOnce() -> R) -> R {
 fn init_tss_cls() {
     let tss_rsp0_ptr =
         VirtAddr::new(ptr::from_ref(tss().lock().deref()) as u64 + size_of::<u32>() as u64);
-    unsafe { cls_mut().tss_rsp0_ptr = tss_rsp0_ptr; }
+    cls_mut().tss_rsp0_ptr = tss_rsp0_ptr;
 }
 
 fn debug_cls() {
 
-    let tss_rsp0 = unsafe {cls().tss_rsp0_ptr};
-    let user_rsp = unsafe {cls().user_rsp};
-    let id = unsafe {cls().id};
-    let local_apic = unsafe { cls().local_apic };
-    let timer_ticks_per_ms = unsafe {cls().timer_ticks_per_ms};
-    let ready_state = unsafe {cls().ready_state};
+    let tss_rsp0 = cls().tss_rsp0_ptr;
+    let user_rsp = cls().user_rsp;
+    let id = cls().id;
+    let local_apic = cls().local_apic ;
+    let timer_ticks_per_ms = cls().timer_ticks_per_ms;
+    let ready_state = cls().ready_state;
 
     info!("Local Struct at adress: {:p}\
         \n\t TSS_rsp0: {:p} \n\t user_rsp: {:p} \n\t Core-Id: {}\
