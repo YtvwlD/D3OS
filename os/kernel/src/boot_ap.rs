@@ -13,15 +13,15 @@ pub extern "C" fn startup_ap(cpu_id: u32) {
     //info!("    Application processor executing 'startup_ap'");
 
     // installs the cpu_id in a cpuLocal struct on the GS segment
-    install_gs_base(new_core_local_storage(cpu_id));
+    install_gs_base(new_core_local_storage(cpu_id, false));
     scheduler::cpu_mark_online();
 
     // Wait until the bootstrap processor has fully initialized the global APIC
     let _apic_ref = APIC.wait();
 
     info!("    APIC is ready!");
-    Apic::set_new_local_apic();
     //start timer
+    Apic::enable_local_apic(cls().local_apic());
 
     let mut l = 5; //loop l times;
     loop{

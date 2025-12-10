@@ -90,8 +90,7 @@ impl Apic {
         let mut io_apics = Vec::<(Mutex<IoApic>, u32)>::new();
 
         // Create Local APIC instance
-        let kernel_local_apic = Box::new(Mutex::new(Self::create_local_apic(&madt, true)));
-        cls_mut().set_local_apic_ptr(Box::leak(kernel_local_apic));
+        let mut kernel_local_apic = cls().local_apic().lock();
 
         match int_model.0 {
             InterruptModel::Apic(apic_desc) => {
@@ -253,11 +252,11 @@ impl Apic {
                 "   Enabling Local APIC [{}]",
                 cpu_info.boot_processor.local_apic_id
             );
-            cls().local_apic().lock().enable();
+            kernel_local_apic.enable();
         }
 
         // Calibrate APIC timer
-        let timer_ticks_per_ms = Apic::calibrate_timer(&mut cls().local_apic().lock());
+        let timer_ticks_per_ms = Apic::calibrate_timer(&mut *kernel_local_apic);
         cls_mut().set_timer_ticks_per_ms(timer_ticks_per_ms);
         info!("   APIC Timer ticks per millisecond: [{timer_ticks_per_ms}]");
 
@@ -268,7 +267,7 @@ impl Apic {
             timer_ticks_per_ms,
         }
     }
-    pub fn set_new_local_apic() {
+    pub fn enable_local_apic(local_apic: &Mutex<LocalApic>) {
         info!("Initializing Local_apic for CPU [{}]", current_core_id());
 
         // Check if APIC is available
@@ -276,16 +275,6 @@ impl Apic {
         if cpuid.get_feature_info().is_none() {
             panic!("APIC: Failed to read CPU ID features!")
         }
-
-        // Find APIC relevant structures in ACPI tables
-        let madt_mapping = acpi_tables()
-            .lock()
-            .find_table::<Madt>()
-            .expect("MADT not available");
-        let madt = madt_mapping.get();
-
-        // Create Local APIC instance
-        let local_apic = Mutex::new(Self::create_local_apic(&madt, false));
 
         // Initialization of global Apic should be finished -> Enable Local Apic
         unsafe {
@@ -302,13 +291,22 @@ impl Apic {
         let timer_ticks_per_ms = apic().timer_ticks_per_ms;
         info!("   APIC Timer ticks per millisecond: [{timer_ticks_per_ms}]");
         cls_mut().set_timer_ticks_per_ms(timer_ticks_per_ms);
-
-        let boxed_local_apic = Box::new(local_apic);
-        cls_mut().set_local_apic_ptr(Box::leak(boxed_local_apic));
     }
 
+    pub fn new_local_apic(kernel_core: bool) -> Mutex<LocalApic> {
+        // Find APIC relevant structures in ACPI tables
+        let madt_mapping = acpi_tables()
+            .lock()
+            .find_table::<Madt>()
+            .expect("MADT not available");
+        let madt = madt_mapping.get();
 
-    fn create_local_apic(madt: &Madt, kernel_core: bool) -> LocalApic {
+        // Create Local APIC instance
+        let local_apic = Mutex::new(Self::create_local_apic(&madt, kernel_core));
+        local_apic
+    }
+
+    pub fn create_local_apic(madt: &Madt, kernel_core: bool) -> LocalApic {
         let lapic_registers_phys_addr = madt.local_apic_address as u64;
 
         if kernel_core {

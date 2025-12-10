@@ -407,7 +407,7 @@ impl Scheduler {
         // the scheduler won't switch threads anymore, and none of the locks will ever be released
         loop {
             let state_tmp = self.ready_state.lock();
-            if allocator().is_locked() {
+            if allocator().is_locked() {    //allocator can be locked again, but only on other cores -> no deadlock, but bottleneck
                 continue;
             }
 

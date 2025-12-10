@@ -46,7 +46,7 @@ use core::ops::Deref;
 use core::panic::PanicInfo;
 use core::ptr;
 use multiboot2::ModuleTag;
-use spin::{Mutex, Once, RwLock};
+use spin::{Mutex, MutexGuard, Once, RwLock};
 use tar_no_std::TarArchiveRef;
 use x2apic::lapic::LocalApic;
 use x86_64::{PhysAddr, VirtAddr};
@@ -184,39 +184,49 @@ pub struct CoreLocalStorage {
     tss_rsp0_ptr: VirtAddr,
     user_rsp: VirtAddr,
     id: u32,
-    local_apic: *const Mutex<LocalApic>,
+    local_apic: Mutex<LocalApic>,
     timer_ticks_per_ms: usize,
-    ready_state: *const Mutex<ReadyState>,
+    ready_state: Mutex<ReadyState>,
 }
 
 impl CoreLocalStorage {
-    pub fn new(id: u32) -> Self {
+    pub fn new(id: u32, kernel_core: bool) -> Self {
         Self {
             self_ptr: 0 as *const CoreLocalStorage,
             tss_rsp0_ptr: VirtAddr::zero(),
             user_rsp: VirtAddr::zero(),
             id: id,
-            local_apic: ptr::null(),
+            local_apic: Apic::new_local_apic(kernel_core),
             timer_ticks_per_ms: 0,
-            ready_state: Box::leak(Box::new(Mutex::new(ReadyState::new()))),
+            ready_state: Mutex::new(ReadyState::new()),
         }
     }
 
+    //useless now? get_ready_state is much safer
     #[inline(always)]
-    pub fn ready_state(&self) -> &Mutex<ReadyState> {
-        assert!(!self.ready_state.is_null());
-        unsafe { &*self.ready_state }
+    fn ready_state(&self) -> &Mutex<ReadyState> {
+        &self.ready_state 
+    }
+
+    pub fn get_ready_state(&self) -> MutexGuard<'_, ReadyState> {
+        
+        // We need to make sure, that both the kernel memory manager and the ready queue are currently not locked.
+        // Otherwise, a deadlock may occur: Since we are holding the ready queue lock,
+        // the scheduler won't switch threads anymore, and none of the locks will ever be released
+        unsafe {
+            loop {
+                let state = self.ready_state.lock();
+                if allocator().is_locked() {    //allocator can be locked again, but only on other cores -> no deadlock
+                    continue;
+                }
+                return state;
+            }
+        }
     }
     
     #[inline(always)]
     pub fn local_apic(&self) -> &Mutex<LocalApic> {
-        assert!(!self.local_apic.is_null());
-        unsafe { &*self.local_apic }
-    }
-
-    pub fn set_local_apic_ptr(&mut self, lapic_ptr: *const Mutex<LocalApic>) {
-        assert!(!lapic_ptr.is_null());
-        self.local_apic = lapic_ptr;
+        &self.local_apic
     }
 
     pub fn set_timer_ticks_per_ms(&mut self, ticks: usize) {
@@ -240,8 +250,8 @@ syscall_dispatcher Code:
 */
 
 // Returns a new CoreLocalStorage Struct with static lifetime
-fn new_core_local_storage(id: u32) -> *mut CoreLocalStorage {
-    let cpu_local = Box::new(CoreLocalStorage::new(id));
+fn new_core_local_storage(id: u32, boot_processor: bool) -> *mut CoreLocalStorage {
+    let cpu_local = Box::new(CoreLocalStorage::new(id, boot_processor));
     let addr = Box::leak(cpu_local) as *mut CoreLocalStorage;
     unsafe { (*addr).self_ptr = addr; }
     addr as *mut CoreLocalStorage
@@ -339,14 +349,14 @@ fn debug_cls() {
     let tss_rsp0 = cls().tss_rsp0_ptr;
     let user_rsp = cls().user_rsp;
     let id = cls().id;
-    let local_apic = cls().local_apic ;
+    let local_apic = cls().local_apic();
     let timer_ticks_per_ms = cls().timer_ticks_per_ms;
-    let ready_state = cls().ready_state;
+    let ready_state = cls().ready_state();
 
     info!("Local Struct at adress: {:p}\
         \n\t TSS_rsp0: {:p} \n\t user_rsp: {:p} \n\t Core-Id: {}\
         \n\t Local APIC: {:?} \n\t Timer Ticks per ms: {}\n\t Ready State: {:p}",
-        cls_ptr(), tss_rsp0, user_rsp, id, local_apic, timer_ticks_per_ms, ready_state);
+        cls_ptr(), tss_rsp0, user_rsp, id, local_apic, timer_ticks_per_ms, &ready_state);
 }
 
 /// ACPI Tables.
