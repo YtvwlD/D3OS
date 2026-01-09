@@ -158,7 +158,7 @@ impl Thread {
         extern "sysv64" fn entry_fn() {
             unreachable!()
         }
-        Self::new_user_thread(new_process, VirtAddr::new(entry), entry_fn)
+        Self::new_user_thread(new_process, VirtAddr::new(entry), entry_fn, tid)
     }
 
     /// Create user thread. Not started yet, nor registered in the scheduler. \
@@ -170,9 +170,10 @@ impl Thread {
         parent: Arc<Process>,
         kickoff_addr: VirtAddr,
         entry: extern "sysv64" fn(),
+        tid: usize,
     ) -> Arc<Thread> {
         let pid = parent.id();
-        let tid = scheduler::next_thread_id(); // get id for new thread
+        //let tid = scheduler::next_thread_id(); // get id for new thread
 
         // Allocate kernel stack for the main thread
         let kernel_stack = stack::alloc_kernel_stack(&parent, pid, tid, "userthread");
