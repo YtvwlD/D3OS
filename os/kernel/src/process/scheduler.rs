@@ -25,7 +25,7 @@
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
 use crate::process::thread::Thread;
-use crate::{allocator, apic, scheduler, timer, tss};
+use crate::{allocator, apic, current_core_id, preempt_is_disabled, request_reschedule, scheduler, timer, tss};
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -33,6 +33,7 @@ use core::{panic, ptr};
 use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::AtomicU32;
 use core::sync::atomic::Ordering::Relaxed;
+use log::info;
 use smallmap::Map;
 use spin::{Mutex, MutexGuard};
 
@@ -160,11 +161,14 @@ impl Scheduler {
 
     /// Start the scheduler, called only once from `boot.rs`
     pub fn start(&self) {
-        // TODO: make sure this is actually called just once
+        // TODO: make sure this is actually called just once (per core)
         let mut state = self.get_ready_state();
         state.current_thread = state.ready_queue.pop_back();
 
-        unsafe { Thread::start_first(state.current_thread.as_ref().expect("Failed to dequeue first thread!").as_ref()); }
+        unsafe { Thread::start_first(state
+            .current_thread.as_ref()
+            .expect("Failed to dequeue first thread!").as_ref()
+        ); }
     }
 
     /// Insert `thread` into the ready queue of the scheduler
@@ -196,7 +200,7 @@ impl Scheduler {
             // Scheduler is not initialized yet, so this function has been called during the boot process
             // So we do active waiting
             timer().wait(ms);
-        } 
+        }
         else {
             // Scheduler is initialized, so we can block the calling thread
             let thread = Scheduler::current(&state);

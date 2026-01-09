@@ -48,7 +48,7 @@ use core::panic::PanicInfo;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use multiboot2::ModuleTag;
-use spin::{Mutex, MutexGuard, Once, RwLock};
+use spin::{Mutex, Once, RwLock};
 use tar_no_std::TarArchiveRef;
 use x2apic::lapic::LocalApic;
 use x86_64::{PhysAddr, VirtAddr};
@@ -222,7 +222,7 @@ pub fn idt() -> &'static Mutex<InterruptDescriptorTable> {
 /// Contains information, which is needed by the syscall handler.
 /// The TSS address is never accessed directly, but via the swapgs instruction.
 /// 'boot.rs' sets up the gs base register with a pointer to this struct.
-/// Once multicore is implemented, we need one of these per core.
+/// Since multicore is implemented, we need one of these per core.
 
 #[repr(C)]
 pub struct CoreLocalStorage {

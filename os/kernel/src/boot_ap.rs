@@ -1,9 +1,9 @@
-use core::any::Any;
 use log::info;
 use crate::{apic, cls, current_core_id, debug_cls, init_gdt_for_this_core, install_gs_base, new_core_local_storage, scheduler, timer, APIC, PREEMPT_COUNT_OFFSET};
 use raw_cpuid::CpuId;
 use crate::device::apic::Apic;
 use crate::process::scheduler;
+use crate::process::thread::Thread;
 use crate::syscall::syscall_dispatcher;
 
 // First rust function called from assembly boot code for an

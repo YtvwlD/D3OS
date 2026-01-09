@@ -7,12 +7,9 @@
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
 use core::arch::{asm, naked_asm};
-use core::mem::size_of;
-use core::ops::Deref;
-use core::ptr;
 use syscall::NUM_SYSCALLS;
 use x86_64::registers::control::{Efer, EferFlags};
-use x86_64::registers::model_specific::{KernelGsBase, LStar, SFMask, Star};
+use x86_64::registers::model_specific::{LStar, SFMask, Star};
 use x86_64::structures::gdt::SegmentSelector;
 use x86_64::{PrivilegeLevel, VirtAddr};
 use crate::syscall::sys_net::{sys_get_ip_adresses, sys_sock_accept, sys_sock_bind, sys_sock_close, sys_sock_connect, sys_sock_open, sys_sock_receive, sys_sock_send};
@@ -22,7 +19,7 @@ use crate::syscall::sys_concurrent::{sys_core_id, sys_process_execute_binary, sy
 use crate::syscall::sys_terminal::{sys_terminal_read, sys_terminal_read_nb, sys_terminal_write};
 use crate::syscall::sys_naming::*;
 
-use crate::{init_tss_cls, tss};
+use crate::{init_tss_cls};
 use log::info;
 use x86_64::registers::rflags::RFlags;
 
