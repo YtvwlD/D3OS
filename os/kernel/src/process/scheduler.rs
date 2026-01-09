@@ -346,7 +346,8 @@ impl Scheduler {
         unreachable!()
     }
 
-    /// Kill the thread with the id `thread_id`.
+    /// Kill the thread with the id `thread_id`, if it is on the same Core
+    /// TODO: implement search for all cores
     pub fn kill(&self, thread_id: usize) {
         {
             // Check if current thread tries to kill itself (illegal)

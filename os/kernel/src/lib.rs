@@ -34,7 +34,7 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::acpi_handler::AcpiHandler;
 use crate::memory::heap::KernelAllocator;
 use crate::process::process_manager::ProcessManager;
-use crate::process::scheduler::{ReadyState, Scheduler};
+use crate::process::scheduler::{debugger_breakpoint_outside_lib, Scheduler};
 use crate::process::thread::Thread;
 use ::log::{Level, Log, Record, error, info};
 use acpi::AcpiTables;
@@ -42,16 +42,21 @@ use alloc::sync::Arc;
 use x86_64::instructions::interrupts;
 use core::fmt::Arguments;
 use core::hint::spin_loop;
+use core::mem::offset_of;
 use core::ops::Deref;
 use core::panic::PanicInfo;
 use core::ptr;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use multiboot2::ModuleTag;
 use spin::{Mutex, MutexGuard, Once, RwLock};
 use tar_no_std::TarArchiveRef;
 use x2apic::lapic::LocalApic;
 use x86_64::{PhysAddr, VirtAddr};
+use x86_64::instructions::segmentation::{Segment, CS, DS, ES, FS, GS, SS};
+use x86_64::instructions::tables::load_tss;
+use x86_64::PrivilegeLevel::Ring0;
 use x86_64::registers::model_specific::KernelGsBase;
-use x86_64::structures::gdt::GlobalDescriptorTable;
+use x86_64::structures::gdt::{Descriptor, GlobalDescriptorTable, SegmentSelector};
 use x86_64::structures::idt::InterruptDescriptorTable;
 use x86_64::structures::paging::PhysFrame;
 use x86_64::structures::paging::frame::PhysFrameRange;
@@ -186,7 +191,9 @@ pub struct CoreLocalStorage {
     id: u32,
     local_apic: Mutex<LocalApic>,
     timer_ticks_per_ms: usize,
-    ready_state: Mutex<ReadyState>,
+    scheduler: Scheduler,
+    //ready_state: Mutex<ReadyState>,
+    //sleep_list: Mutex<Vec<(Arc<Thread>, usize)>>,
 }
 
 impl CoreLocalStorage {
@@ -198,32 +205,33 @@ impl CoreLocalStorage {
             id: id,
             local_apic: Apic::new_local_apic(kernel_core),
             timer_ticks_per_ms: 0,
-            ready_state: Mutex::new(ReadyState::new()),
+            scheduler: Scheduler::new(),
+            //ready_state: Mutex::new(ReadyState::new()),
+            //sleep_list: Mutex::new(Vec::new()),
         }
     }
 
-    //useless now? get_ready_state is much safer
+    /*
+    // useless now? get_ready_state is much safer
     #[inline(always)]
     fn ready_state(&self) -> &Mutex<ReadyState> {
-        &self.ready_state 
+        &self.scheduler.get_ready_state();
     }
 
     pub fn get_ready_state(&self) -> MutexGuard<'_, ReadyState> {
-        
+
         // We need to make sure, that both the kernel memory manager and the ready queue are currently not locked.
         // Otherwise, a deadlock may occur: Since we are holding the ready queue lock,
         // the scheduler won't switch threads anymore, and none of the locks will ever be released
-        unsafe {
-            loop {
-                let state = self.ready_state.lock();
-                if allocator().is_locked() {    //allocator can be locked again, but only on other cores -> no deadlock
-                    continue;
-                }
-                return state;
+        loop {
+            let state = self.ready_state.lock();
+            if allocator().is_locked() {    //allocator can be locked again, but only on other cores -> no deadlock
+                continue;
             }
+            return state;
         }
-    }
-    
+    }*/
+
     #[inline(always)]
     pub fn local_apic(&self) -> &Mutex<LocalApic> {
         &self.local_apic
@@ -346,17 +354,20 @@ fn init_tss_cls() {
 
 fn debug_cls() {
 
-    let tss_rsp0 = cls().tss_rsp0_ptr;
-    let user_rsp = cls().user_rsp;
-    let id = cls().id;
-    let local_apic = cls().local_apic();
-    let timer_ticks_per_ms = cls().timer_ticks_per_ms;
-    let ready_state = cls().ready_state();
+    let cls = cls();
+    let tss_rsp0 = cls.tss_rsp0_ptr;
+    let user_rsp = cls.user_rsp;
+    let id = cls.id;
+    let local_apic = cls.local_apic();
+    let timer_ticks_per_ms = cls.timer_ticks_per_ms;
 
     info!("Local Struct at adress: {:p}\
         \n\t TSS_rsp0: {:p} \n\t user_rsp: {:p} \n\t Core-Id: {}\
-        \n\t Local APIC: {:?} \n\t Timer Ticks per ms: {}\n\t Ready State: {:p}",
-        cls_ptr(), tss_rsp0, user_rsp, id, local_apic, timer_ticks_per_ms, &ready_state);
+        \n\t Local APIC: {:?} \n\t Timer Ticks per ms: {}\n\t",
+        cls_ptr(), tss_rsp0, user_rsp, id, local_apic, timer_ticks_per_ms);
+
+    cls.scheduler.debug_ready_queue();
+    cls.scheduler.debug_sleep_list();
 }
 
 /// ACPI Tables.
@@ -450,11 +461,10 @@ pub fn process_manager() -> &'static RwLock<ProcessManager> {
 /// Scheduler.
 /// Manages the execution of threads and switches between them.
 /// Allows to access active threads, put threads to sleep, exit/kill threads and creates new ones.
-static SCHEDULER: Once<Scheduler> = Once::new();
+//static SCHEDULER: Once<Scheduler> = Once::new();
 
 pub fn scheduler() -> &'static Scheduler {
-    SCHEDULER.call_once(Scheduler::new);
-    SCHEDULER.get().unwrap()
+    &cls().scheduler
 }
 
 /// Interrupt Dispatcher.
