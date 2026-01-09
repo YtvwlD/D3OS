@@ -224,11 +224,12 @@ impl Scheduler {
                 block_list.push(thread);
             } // drop lock for block_list
             //info!("Scheduler::block: switch to next thread");
+            thread_removed();
             self.block_and_switch(&mut state);
         }
     }
 
-    /// Put calling thread to block
+    /// Requeue thread with `tid` from process with `pid` to the ready queue of the scheduler
     pub fn deblock(&self, pid: usize, tid: usize) {
         let mut block_list = self.blocked_list.lock();
 
@@ -277,6 +278,7 @@ impl Scheduler {
             unsafe {
                 Thread::switch(current_ptr, next_ptr);
             }
+            thread_deblocked();
         }
     }
 
@@ -300,6 +302,7 @@ impl Scheduler {
             let mut join_map = self.join_map.lock();
             if let Some(join_list) = join_map.get_mut(&thread_id) {
                 join_list.push(thread);
+                thread_removed();
             } else {
                 // Joining on a non-existent thread has no effect (i.e. the thread has already finished running)
                 return;
@@ -325,11 +328,13 @@ impl Scheduler {
 
             for thread in join_list {
                 ready_state.ready_queue.push_front(Arc::clone(thread));
+                thread_deblocked();
             }
 
             join_map.remove(&current.id());
         }
 
+        thread_removed();
         drop(current); // Decrease Rc manually, because block() does not return
         self.block_and_switch(&mut ready_state);
         unreachable!()
@@ -355,10 +360,36 @@ impl Scheduler {
 
         for thread in join_list {
             ready_state.ready_queue.push_front(Arc::clone(thread));
+            thread_deblocked();
         }
 
         join_map.remove(&thread_id);
+
+        let before = ready_state.ready_queue.len();
         ready_state.ready_queue.retain(|thread| thread.id() != thread_id);
+        let after = ready_state.ready_queue.len();
+
+        if before != after {
+            thread_removed();
+        }
+    }
+
+    pub fn debug_ready_queue(&self) {
+        let state = self.get_ready_state();
+        let id = current_core_id();
+        info!("Scheduler on Core {}: Ready queue:", id);
+        for thread in &state.ready_queue {
+            info!("  - {}", thread.id());
+        }
+    }
+
+    pub fn debug_sleep_list(&self) {
+        let sleep_list = self.sleep_list.lock();
+        let id = current_core_id();
+        info!("Scheduler on Core {}: Sleep list:", id);
+        for thread in sleep_list.iter() {
+            info!("  - {}, {}", thread.0.id(), thread.1);
+        }
     }
 
     /// Block calling thread and switch to next ready thread.
