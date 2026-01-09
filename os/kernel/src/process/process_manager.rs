@@ -91,6 +91,14 @@ impl ProcessManager {
         self.active_processes.first().map(Arc::clone)
     }
 
+    pub fn try_current_process(&self) -> Arc<Process> {
+        let thread = scheduler().try_current_thread();
+        if thread.is_none() {
+            return self.kernel_process().unwrap();
+        }
+        thread.unwrap().process()
+    }
+
     /// Get reference to current process
     pub fn current_process(&self) -> Arc<Process> {
         if self.active_processes.len() > 1 {

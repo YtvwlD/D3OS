@@ -136,6 +136,12 @@ impl Scheduler {
         Scheduler::current(&state)
     }
 
+    /// Return reference to current thread and if not possible, then first kernel thread
+    pub fn try_current_thread(&self) -> Option<Arc<Thread>> {
+        let state = self.get_ready_state();
+        Scheduler::try_current(&state)
+    }
+
     /// Return reference to thread identified by `thread_id`
     pub fn thread(&self, thread_id: usize) -> Option<Arc<Thread>> {
         self.ready_state.lock().ready_queue
@@ -427,6 +433,16 @@ impl Scheduler {
     /// Return current running thread
     fn current(state: &ReadyState) -> Arc<Thread> {
         Arc::clone(state.current_thread.as_ref().expect("Trying to access current thread before initialization!"))
+    }
+
+    /// Return current running thread or None if not init yet
+    fn try_current(state: &ReadyState) -> Option<Arc<Thread>> {
+        if state.current_thread.is_some() {
+            Some(Arc::clone(state.current_thread.as_ref().unwrap()))
+        }
+        else {
+            None
+        }
     }
 
     /// Check sleep list for threads that need to be waken up

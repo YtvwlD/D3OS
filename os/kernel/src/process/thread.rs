@@ -108,7 +108,7 @@ impl Thread {
     /// Create a kernel thread. Not started yet, nor registered in the scheduler. \
     /// `entry` is the thread entry function.
     pub fn new_kernel_thread(entry: extern "sysv64" fn(), tag_str: &str) -> Arc<Thread> {
-        let process = process_manager().read().current_process();
+        let process = process_manager().read().kernel_process().expect("Trying to create a kernel thread before process initialization!");
         let pid = process.id();
         let tid = scheduler::next_thread_id();
 
