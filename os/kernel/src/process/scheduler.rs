@@ -84,6 +84,7 @@ pub struct Scheduler {
     sleep_list: Mutex<Vec<(Arc<Thread>, usize)>>,
     blocked_list: Mutex<Vec<Arc<Thread>>>,
     join_map: Mutex<Map<usize, Vec<Arc<Thread>>>>, // manage which threads are waiting for a thread-id to terminate
+    has_started: bool,
 }
 
 unsafe impl Send for Scheduler {}
@@ -104,6 +105,7 @@ impl Scheduler {
             sleep_list: Mutex::new(Vec::new()),
             blocked_list: Mutex::new(Vec::new()),
             join_map: Mutex::new(Map::new()),
+            has_started: false,
         }
     }
 
@@ -160,8 +162,11 @@ impl Scheduler {
 
 
     /// Start the scheduler, called only once from `boot.rs`
-    pub fn start(&self) {
-        // TODO: make sure this is actually called just once (per core)
+    pub fn start(&mut self) {
+        if self.has_started {
+            return;
+        }
+        self.has_started = true;
         let mut state = self.get_ready_state();
         state.current_thread = state.ready_queue.pop_back();
 

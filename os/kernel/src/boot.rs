@@ -18,7 +18,7 @@ use crate::memory::vma::VmaType;
 use crate::memory::{dram, nvmem, PAGE_SIZE};
 use crate::process::thread::Thread;
 use crate::syscall::{sys_vmem, syscall_dispatcher};
-use crate::{acpi_tables, allocator, apic, boot_ap, built_info, consts, debug_cls, get_initrd_frames, init_acpi_tables, init_apic, init_cpu_info, init_gdt_for_this_core, init_initrd, init_pci, init_serial_port, init_terminal, initrd, install_gs_base, ipi, keyboard, logger, memory, network, new_core_local_storage, process_manager, scheduler, serial_port, terminal, timer};
+use crate::{acpi_tables, allocator, apic, boot_ap, built_info, consts, debug_cls, get_initrd_frames, init_acpi_tables, init_apic, init_cpu_info, init_gdt_for_this_core, init_initrd, init_pci, init_serial_port, init_terminal, initrd, install_gs_base, ipi, keyboard, logger, memory, network, new_core_local_storage, process_manager, scheduler, scheduler_start, serial_port, terminal, timer};
 use crate::{efi_services_available, naming, storage};
 use alloc::format;
 use alloc::string::ToString;
@@ -163,6 +163,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     // Also now has do be done after the cls is setup, for tss() to work
     info!("Initializing GDT");
     init_gdt_for_this_core();
+    syscall_dispatcher::init();
 
     // Map the framebuffer, needed for text output of the terminal
     let fb_info = multiboot
@@ -216,8 +217,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     info!("Bootloader: [{bootloader_name}]");
 
     interrupt_dispatcher::setup_idt();
-    
-    syscall_dispatcher::init();
+
 
     init_apic();
 
@@ -354,7 +354,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
 
     scheduler().ready(Thread::new_kernel_thread(boot_ap::idle_thread, "idle"));
 
-    scheduler().start();
+    scheduler_start()
 }
 
 /// Return `PhysFrameRange` for memory occupied by the kernel image

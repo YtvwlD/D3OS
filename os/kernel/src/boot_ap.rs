@@ -1,5 +1,5 @@
 use log::info;
-use crate::{apic, cls, current_core_id, debug_cls, init_gdt_for_this_core, install_gs_base, new_core_local_storage, scheduler, timer, APIC, PREEMPT_COUNT_OFFSET};
+use crate::{apic, cls, current_core_id, debug_cls, init_gdt_for_this_core, install_gs_base, new_core_local_storage, scheduler, scheduler_start, timer, APIC, PREEMPT_COUNT_OFFSET};
 use raw_cpuid::CpuId;
 use crate::device::apic::Apic;
 use crate::process::scheduler;
@@ -55,7 +55,7 @@ pub extern "C" fn startup_ap(cpu_id: u32) {
         scheduler().ready(Thread::new_kernel_thread(idle_thread2, "idle"));
 
             apic().start_timer(10);
-            scheduler().start();
+            scheduler_start();
     loop {}
 }
 
