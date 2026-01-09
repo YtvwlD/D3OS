@@ -154,19 +154,60 @@ pub fn efi_services_available() -> bool {
 
 /// Global Descriptor Table.
 /// Needed to set up basic segmentation (flat model) and the TSS.
-static GDT: Mutex<GlobalDescriptorTable> = Mutex::new(GlobalDescriptorTable::new());
+//static GDT: Mutex<GlobalDescriptorTable> = Mutex::new(GlobalDescriptorTable::new());
 
 pub fn gdt() -> &'static Mutex<GlobalDescriptorTable> {
-    &GDT
+    &cls().gdt
 }
 
 /// Task State Segment.
 /// Needed to set up kernel/user mode switching.
-/// Once multicore is implemented, we need one TSS per core.
-static TSS: Mutex<TaskStateSegment> = Mutex::new(TaskStateSegment::new());
+/// Since multicore is implemented, we need one TSS per core, so it was moved to cls.
+//static TSS: Mutex<TaskStateSegment> = Mutex::new(TaskStateSegment::new());
 
 pub fn tss() -> &'static Mutex<TaskStateSegment> {
-    &TSS
+    &cls().tss
+}
+
+/// Set up the GDT
+/// Initialize the per-core GDT by copying a fixed template layout.
+/// Must be called on the current core after GS/CLS is installed and before enabling interrupts/scheduler.
+pub fn init_gdt_for_this_core() {
+    //use x86_64::PrivilegeLevel::Ring0;
+
+    let cls = cls_mut();
+    let mut gdt = cls.gdt.lock();
+
+    // Rebuild a new GDT
+    gdt.append(Descriptor::kernel_code_segment()); // selector index 1
+    gdt.append(Descriptor::kernel_data_segment()); // selector index 2
+    gdt.append(Descriptor::user_data_segment());   // selector index 3
+    gdt.append(Descriptor::user_code_segment());   // selector index 4
+
+    unsafe {
+        // We need to obtain a static reference to the TSS and GDT for the following operations.
+        // We know, that they have a static lifetime, since they are declared as static variables in 'kernel/mod.rs'.
+        // However, since they are hidden behind a Mutex, the borrow checker does not see them with a static lifetime.
+        let gdt_ref = ptr::from_ref(gdt.deref()).as_ref().unwrap();
+        let tss_ref = ptr::from_ref(tss().lock().deref()).as_ref().unwrap();
+        gdt.append(Descriptor::tss_segment(tss_ref));
+        gdt_ref.load();
+    }
+
+    unsafe {
+        // Load task state segment
+        load_tss(SegmentSelector::new(5, Ring0));
+
+        // Set code and stack segment register
+        CS::set_reg(SegmentSelector::new(1, Ring0));
+        SS::set_reg(SegmentSelector::new(2, Ring0));
+
+        // Other segment registers are not used in long mode (set to 0)
+        DS::set_reg(SegmentSelector::new(0, Ring0));
+        ES::set_reg(SegmentSelector::new(0, Ring0));
+        FS::set_reg(SegmentSelector::new(0, Ring0));
+        GS::set_reg(SegmentSelector::new(0, Ring0));
+    }
 }
 
 /// Interrupt Descriptor Table.
@@ -194,6 +235,8 @@ pub struct CoreLocalStorage {
     scheduler: Scheduler,
     //ready_state: Mutex<ReadyState>,
     //sleep_list: Mutex<Vec<(Arc<Thread>, usize)>>,
+    tss: Mutex<TaskStateSegment>,
+    gdt: Mutex<GlobalDescriptorTable>,
 }
 
 impl CoreLocalStorage {
@@ -208,6 +251,8 @@ impl CoreLocalStorage {
             scheduler: Scheduler::new(),
             //ready_state: Mutex::new(ReadyState::new()),
             //sleep_list: Mutex::new(Vec::new()),
+            tss: Mutex::new(TaskStateSegment::new()),
+            gdt: Mutex::new(GlobalDescriptorTable::new()),
         }
     }
 

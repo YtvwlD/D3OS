@@ -18,7 +18,7 @@ use crate::memory::vma::VmaType;
 use crate::memory::{dram, frames_lf, nvmem, PAGE_SIZE};
 use crate::process::thread::Thread;
 use crate::syscall::{sys_vmem, syscall_dispatcher};
-use crate::{acpi_tables, allocator, apic, built_info, consts, debug_cls, gdt, get_initrd_frames, init_acpi_tables, init_apic, init_cpu_info, init_initrd, init_pci, init_serial_port, init_terminal, initrd, install_gs_base, ipi, keyboard, logger, memory, network, new_core_local_storage, process_manager, scheduler, serial_port, terminal, timer, tss};
+use crate::{acpi_tables, allocator, apic, boot_ap, built_info, consts, debug_cls, get_initrd_frames, init_acpi_tables, init_apic, init_cpu_info, init_gdt_for_this_core, init_initrd, init_pci, init_serial_port, init_terminal, initrd, install_gs_base, ipi, keyboard, logger, memory, network, new_core_local_storage, process_manager, scheduler, serial_port, terminal, timer};
 use crate::{efi_services_available, naming, storage};
 use alloc::format;
 use alloc::string::ToString;
@@ -75,11 +75,6 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
 
     // Search memory map, provided by bootloader or EFI, for usable memory and initialize physical memory management with free memory regions
     let multiboot = multiboot2_search_memory_map(multiboot2_addr);
-
-    // Setup the GDT (Global Descriptor Table)
-    // Has to be done after EFI boot services have been exited, since they rely on their own GDT
-    info!("Initializing GDT");
-    init_gdt();
 
     // The bootloader marks the kernel image & AP boot region as available,
     // so we need to reserve it manually
@@ -155,6 +150,26 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
         logger().register(serial);
     }
 
+    // Initialize ACPI tables
+    info!("Initializing ACPI tables");
+    let rsdp_addr: usize = if let Some(rsdp_tag) = multiboot.rsdp_v2_tag() {
+        ptr::from_ref(rsdp_tag) as usize + size_of::<TagHeader>()
+    } else if let Some(rsdp_tag) = multiboot.rsdp_v1_tag() {
+        ptr::from_ref(rsdp_tag) as usize + size_of::<TagHeader>()
+    } else {
+        panic!("ACPI not available!");
+    };
+    init_acpi_tables(rsdp_addr);
+
+    // Prerequisite for scheduler, apic & dispatcher (also terminal)
+    install_gs_base(new_core_local_storage(0, true));
+
+    // Setup the GDT (Global Descriptor Table)
+    // Has to be done after EFI boot services have been exited, since they rely on their own GDT
+    // Also now has do be done after the cls is setup, for tss() to work
+    info!("Initializing GDT");
+    init_gdt_for_this_core();
+
     // Map the framebuffer, needed for text output of the terminal
     let fb_info = multiboot
         .framebuffer_tag()
@@ -206,21 +221,8 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     info!("Compiler: [{}]", built_info::RUSTC_VERSION);
     info!("Bootloader: [{bootloader_name}]");
 
-    // Initialize ACPI tables
-    info!("Initializing ACPI tables");
-    let rsdp_addr: usize = if let Some(rsdp_tag) = multiboot.rsdp_v2_tag() {
-        ptr::from_ref(rsdp_tag) as usize + size_of::<TagHeader>()
-    } else if let Some(rsdp_tag) = multiboot.rsdp_v1_tag() {
-        ptr::from_ref(rsdp_tag) as usize + size_of::<TagHeader>()
-    } else {
-        panic!("ACPI not available!");
-    };
-    init_acpi_tables(rsdp_addr);
-
     interrupt_dispatcher::setup_idt();
-
-    // Prerequisite for scheduler, apic & dispatcher
-    install_gs_base(new_core_local_storage(0, true));
+    
     syscall_dispatcher::init();
 
     init_apic();
@@ -357,42 +359,6 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     debug_cls();
 
     scheduler().start();
-}
-
-/// Set up the GDT
-fn init_gdt() {
-    let mut gdt = gdt().lock();
-    let tss = tss().lock();
-
-    gdt.append(Descriptor::kernel_code_segment());
-    gdt.append(Descriptor::kernel_data_segment());
-    gdt.append(Descriptor::user_data_segment());
-    gdt.append(Descriptor::user_code_segment());
-
-    unsafe {
-        // We need to obtain a static reference to the TSS and GDT for the following operations.
-        // We know, that they have a static lifetime, since they are declared as static variables in 'kernel/mod.rs'.
-        // However, since they are hidden behind a Mutex, the borrow checker does not see them with a static lifetime.
-        let gdt_ref = ptr::from_ref(gdt.deref()).as_ref().unwrap();
-        let tss_ref = ptr::from_ref(tss.deref()).as_ref().unwrap();
-        gdt.append(Descriptor::tss_segment(tss_ref));
-        gdt_ref.load();
-    }
-
-    unsafe {
-        // Load task state segment
-        load_tss(SegmentSelector::new(5, Ring0));
-
-        // Set code and stack segment register
-        CS::set_reg(SegmentSelector::new(1, Ring0));
-        SS::set_reg(SegmentSelector::new(2, Ring0));
-
-        // Other segment registers are not used in long mode (set to 0)
-        DS::set_reg(SegmentSelector::new(0, Ring0));
-        ES::set_reg(SegmentSelector::new(0, Ring0));
-        FS::set_reg(SegmentSelector::new(0, Ring0));
-        GS::set_reg(SegmentSelector::new(0, Ring0));
-    }
 }
 
 /// Return `PhysFrameRange` for memory occupied by the kernel image
