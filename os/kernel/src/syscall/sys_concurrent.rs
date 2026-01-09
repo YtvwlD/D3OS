@@ -14,6 +14,7 @@ use core::str::from_utf8;
 use x86_64::VirtAddr;
 use syscall::return_vals::Errno;
 use crate::{current_core_id, initrd, process_manager, scheduler};
+use crate::process::scheduler;
 use crate::process::thread::Thread;
 
 
@@ -27,7 +28,8 @@ pub extern "sysv64" fn sys_process_exit() -> ! {
 }
 
 pub extern "sysv64" fn sys_thread_create(kickoff_addr: u64, entry: extern "sysv64" fn()) -> isize {
-    let thread = Thread::new_user_thread(process_manager().read().current_process(), VirtAddr::new(kickoff_addr), entry);
+    let tid = scheduler::next_thread_id();
+    let thread = Thread::new_user_thread(process_manager().read().current_process(), VirtAddr::new(kickoff_addr), entry, tid);
     let id = thread.id();
 
     scheduler().ready(thread);
