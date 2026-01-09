@@ -37,11 +37,19 @@ use smallmap::Map;
 use spin::{Mutex, MutexGuard};
 
 // thread IDs
-static THREAD_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
+pub static THREAD_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
+pub static THREAD_KILLED_COUNTER: AtomicUsize = AtomicUsize::new(1);
 static ACTIVE_CPUS: AtomicU32 = AtomicU32::new(1);  //BP automatically
 
 pub fn next_thread_id() -> usize {
     THREAD_ID_COUNTER.fetch_add(1, Relaxed)
+}
+
+pub fn thread_removed() -> usize {
+    THREAD_KILLED_COUNTER.fetch_add(1, Relaxed)
+}
+pub fn thread_deblocked() -> usize {
+    THREAD_KILLED_COUNTER.fetch_sub(1, Relaxed)
 }
 
 pub fn cpu_mark_online() {
@@ -101,6 +109,12 @@ impl Scheduler {
     /// Called after the scheduler has been fully initialized
     pub fn set_init(&self) {
         self.get_ready_state().initialized = true;
+    }
+
+    pub fn active_thread_count(&self) -> usize {
+        let threads_created = THREAD_ID_COUNTER.load(Relaxed);
+        let threads_killed = THREAD_KILLED_COUNTER.load(Relaxed);
+        threads_created - threads_killed
     }
 
     /// Get all active thread IDs
