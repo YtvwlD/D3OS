@@ -358,6 +358,8 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     
     debug_cls();
 
+    scheduler().ready(Thread::new_kernel_thread(boot_ap::idle_thread, "idle"));
+
     scheduler().start();
 }
 
