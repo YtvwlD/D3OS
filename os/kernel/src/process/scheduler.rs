@@ -502,3 +502,7 @@ impl Scheduler {
         }
     }
 }
+//TODO: delete this method
+pub fn debugger_breakpoint_outside_lib() -> usize {
+    return 0;
+}

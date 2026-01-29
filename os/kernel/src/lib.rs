@@ -154,6 +154,7 @@ pub fn efi_services_available() -> bool {
 
 /// Global Descriptor Table.
 /// Needed to set up basic segmentation (flat model) and the TSS.
+/// Since multicore is implemented, we need one TSS per core, so it was moved to cls.
 //static GDT: Mutex<GlobalDescriptorTable> = Mutex::new(GlobalDescriptorTable::new());
 
 pub fn gdt() -> &'static Mutex<GlobalDescriptorTable> {
@@ -335,6 +336,8 @@ pub fn cls_ptr() -> *mut CoreLocalStorage {
 }
 #[inline(always)]
 pub fn cls<'a>() -> &'a CoreLocalStorage {
+    let cls = cls_ptr();
+    debugger_breakpoint_outside_lib();
     unsafe { &*cls_ptr() }
 }
 #[inline(always)]
@@ -510,6 +513,11 @@ pub fn process_manager() -> &'static RwLock<ProcessManager> {
 
 pub fn scheduler() -> &'static Scheduler {
     &cls().scheduler
+}
+
+// returns without starting if scheduler is already running
+pub fn scheduler_start() {
+    cls_mut().scheduler.start();
 }
 
 /// Interrupt Dispatcher.

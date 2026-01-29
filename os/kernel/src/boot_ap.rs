@@ -29,33 +29,33 @@ pub extern "C" fn startup_ap(cpu_id: u32) {
     let mut l = 5; //loop l times;
     loop{
         timer().wait(1000);
-        info!("    Application processor still running.. (id:{})", cpu_id);
+        //info!("    Application processor still running.. (id:{})", cpu_id);
         //terminal().write_str("Hello World!");
         l -= 1;
         if l ==0 { break;}
     }
 
     let cpuid = CpuId::new();   //CpuId-Crate
-
-    let curr_cpu_id = current_core_id();
-
+    
     if let Some(feat) = cpuid.get_feature_info() {
         let has_tsc = feat.has_tsc();
         let has_apic = feat.has_apic();
         let id = feat.initial_local_apic_id();
-        info!("  Core: {:?}\n\
+        let curr_cpu_id = current_core_id();
+        /*info!("  Core: {:?}\n\
             TSC: {}    APIC: {}    APIC-id: {}    Cpu-id: {}"
             , cpuid.type_id(), has_tsc, has_apic, id, curr_cpu_id);
-        //info!(" Cpu ID should be {} and cpuLocal says {}", cpu_id, current_core_id());
+        //info!(" Cpu ID should be {} and cpuLocal says {}", cpu_id, current_core_id());*/
     }
 
     //debug_cls();
+    scheduler().ready(Thread::new_kernel_thread(idle_thread, "idle"));
+    scheduler().ready(Thread::new_kernel_thread(idle_thread2, "idle"));
 
-        scheduler().ready(Thread::new_kernel_thread(idle_thread, "idle"));
-        scheduler().ready(Thread::new_kernel_thread(idle_thread2, "idle"));
 
-            apic().start_timer(10);
-            scheduler_start();
+    apic().start_timer(10);
+    scheduler_start();
+
     loop {}
 }
 
