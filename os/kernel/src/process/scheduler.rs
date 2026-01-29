@@ -251,48 +251,6 @@ impl Scheduler {
         if let Some(pos) = block_list.iter().position(|thread| thread.id() == tid && thread.process().id() == pid) {
             let thread = block_list.remove(pos);
             self.ready(thread);
-        }
-    }
-
-    /// Switch from current to next thread (from ready queue). \
-    /// If `interrupt` is true, the function is called from an ISR and will send EOI to APIC otherwise not.
-    fn switch_thread(&self, interrupt: bool) {
-        if let Some(mut state) = self.ready_state.try_lock() {
-            if !state.initialized {
-                return;
-            }
-
-            if let Some(mut sleep_list) = self.sleep_list.try_lock() {
-                Scheduler::check_sleep_list(&mut state, &mut sleep_list);
-            }
-
-            // Get clone of the current thread
-            let current = Scheduler::current(&state);
-
-            // Current thread is initializing itself and may not be interrupted
-            if current.stacks_locked() || tss().is_locked() {
-                return;
-            }
-
-            // Try to get the next thread from the ready queue
-            let next = match state.ready_queue.pop_back() {
-                Some(thread) => thread,
-                None => return,
-            };
-
-            let current_ptr = ptr::from_ref(current.as_ref());
-            let next_ptr = ptr::from_ref(next.as_ref());
-
-            state.current_thread = Some(next);
-            state.ready_queue.push_front(current);
-
-            if interrupt {
-                apic().end_of_interrupt();
-            }
-
-            unsafe {
-                Thread::switch(current_ptr, next_ptr);
-            }
             thread_deblocked();
         }
     }
@@ -437,6 +395,76 @@ impl Scheduler {
 
         unsafe {
             Thread::switch(current_ptr, next_ptr);
+        }
+    }
+
+    /// Switch from current to next thread (from ready queue). \
+    /// If `interrupt` is true, the function is called from an ISR and will send EOI to APIC otherwise not.
+    fn switch_thread(&self, interrupt: bool) {
+        if let Some(mut state) = self.ready_state.try_lock() {
+            if !state.initialized {
+                if interrupt {
+                    apic().end_of_interrupt();
+                }
+                return;
+            }
+
+            if interrupt {
+                if preempt_is_disabled() {
+                    request_reschedule();
+                    apic().end_of_interrupt();
+                    return;
+                }
+            }
+            else {
+                if preempt_is_disabled() {
+                    return;
+                }
+            }
+
+            if let Some(mut sleep_list) = self.sleep_list.try_lock() {
+                Scheduler::check_sleep_list(&mut state, &mut sleep_list);
+            }
+
+            // Get clone of the current thread
+            let current = Scheduler::current(&state);
+
+            // Current thread is initializing itself and may not be interrupted
+            if current.stacks_locked() || tss().is_locked() {
+                if interrupt {
+                    apic().end_of_interrupt();
+                }
+                return;
+            }
+
+            // Try to get the next thread from the ready queue
+            let next = match state.ready_queue.pop_back() {
+                Some(thread) => thread,
+                None => {
+                    if interrupt {
+                        apic().end_of_interrupt();
+                    }
+                    return;
+                },
+            };
+
+            let current_ptr = ptr::from_ref(current.as_ref());
+            let next_ptr = ptr::from_ref(next.as_ref());
+
+            state.current_thread = Some(next);
+            state.ready_queue.push_front(current);
+
+            if interrupt {
+                apic().end_of_interrupt();
+            }
+
+            unsafe {
+                Thread::switch(current_ptr, next_ptr);
+            }
+        } else {
+            if interrupt {
+                apic().end_of_interrupt();
+            }
         }
     }
 

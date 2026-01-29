@@ -233,12 +233,17 @@ pub struct CoreLocalStorage {
     id: u32,
     local_apic: Mutex<LocalApic>,
     timer_ticks_per_ms: usize,
+    preempt_count: AtomicUsize,
+    reschedule_pending: AtomicBool,
     scheduler: Scheduler,
     //ready_state: Mutex<ReadyState>,
     //sleep_list: Mutex<Vec<(Arc<Thread>, usize)>>,
     tss: Mutex<TaskStateSegment>,
     gdt: Mutex<GlobalDescriptorTable>,
 }
+
+const PREEMPT_COUNT_OFFSET: usize = offset_of!(CoreLocalStorage, preempt_count);
+const RESCHED_PENDING_OFFSET: usize = offset_of!(CoreLocalStorage, reschedule_pending);
 
 impl CoreLocalStorage {
     pub fn new(id: u32, kernel_core: bool) -> Self {
@@ -249,6 +254,8 @@ impl CoreLocalStorage {
             id: id,
             local_apic: Apic::new_local_apic(kernel_core),
             timer_ticks_per_ms: 0,
+            preempt_count: AtomicUsize::new(0),
+            reschedule_pending: AtomicBool::new(false),
             scheduler: Scheduler::new(),
             //ready_state: Mutex::new(ReadyState::new()),
             //sleep_list: Mutex::new(Vec::new()),
@@ -317,6 +324,76 @@ fn install_gs_base(core_local_ptr: *mut CoreLocalStorage) {
     KernelGsBase::write(VirtAddr::from_ptr(core_local_ptr));
 }
 
+#[inline(always)]
+pub fn preempt_disable() {
+    cls().preempt_count.fetch_add(1, Ordering::SeqCst);
+}
+
+#[inline(always)]
+fn preempt_disable_no_swap() {
+    let base = read_kernel_gs_base() as *mut u8;
+    unsafe {
+        let cnt_ptr = base.add(PREEMPT_COUNT_OFFSET) as *mut AtomicUsize;
+        (*cnt_ptr).fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[inline(always)]
+fn preempt_enable_no_swap() {
+    let base = read_kernel_gs_base() as *mut u8;
+    let prev_counter;
+    let reschedule_pending;
+    unsafe {
+        let cnt_ptr = base.add(PREEMPT_COUNT_OFFSET) as *mut AtomicUsize;
+        let bool_ptr = base.add(RESCHED_PENDING_OFFSET) as *mut AtomicBool;
+        prev_counter = (*cnt_ptr).fetch_sub(1, Ordering::SeqCst);
+        reschedule_pending = (*bool_ptr).swap(false, Ordering::SeqCst);
+    }
+    debug_assert!(prev_counter > 0);
+    // drain possible pending reschedule
+        if prev_counter == 1 && reschedule_pending {
+            scheduler().switch_thread_no_interrupt();
+        }
+}
+
+
+#[inline(always)]
+pub fn preempt_enable() {
+    let prev = cls().preempt_count.fetch_sub(1, Ordering::SeqCst);
+    debug_assert!(prev > 0);
+    // drain possible pending reschedule
+    if prev == 1 && cls().reschedule_pending.swap(false, Ordering::SeqCst) {
+        scheduler().switch_thread_no_interrupt();
+    }
+}
+
+#[inline(always)]
+pub fn preempt_is_disabled() -> bool {
+    cls().preempt_count.load(Ordering::SeqCst) != 0
+}
+
+#[inline(always)]
+pub fn request_reschedule() {
+    cls().reschedule_pending.store(true, Ordering::SeqCst);
+}
+
+#[inline(always)]
+fn read_kernel_gs_base() -> u64 {
+    let lo: u32;
+    let hi: u32;
+    unsafe {
+        core::arch::asm!(
+        "rdmsr",
+        in("ecx") 0xC000_0102u32, // IA32_KERNEL_GS_BASE
+        out("eax") lo,
+        out("edx") hi,
+        options(nomem, nostack, preserves_flags)
+        );
+    }
+    ((hi as u64) << 32) | (lo as u64)
+}
+
+
 // Returns the whole struct from the GS segment
 #[inline(always)]
 fn cls_ptr_from_gs() -> *mut CoreLocalStorage {
@@ -380,8 +457,10 @@ pub fn with_kernel_gs<R>(f: impl FnOnce() -> R) -> R {
         rflags = out(reg) rflags,
         options(preserves_flags)
         );
+        preempt_disable_no_swap();
         core::arch::asm!("cli", options(nomem, nostack));
         core::arch::asm!("swapgs", options(nomem, nostack, preserves_flags));
+        debugger_breakpoint_outside_lib();
 
         let ret = f();
 
@@ -390,6 +469,7 @@ pub fn with_kernel_gs<R>(f: impl FnOnce() -> R) -> R {
         if (rflags & (1 << 9)) != 0 {
             core::arch::asm!("sti", options(nomem, nostack));
         }
+        preempt_enable_no_swap();
         ret
     }
 }
