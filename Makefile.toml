@@ -24,7 +24,9 @@ args = [
     #"qemu-system-x86_64",
     # Base machine configuration
     "-machine", "q35,nvdimm=on,pcspk-audiodev=audio0",
-    "-m", "256M,slots=2,maxmem=1G",
+    #"-m", "256M,slots=2,maxmem=1G",    #default
+    "-m", "1G,slots=2,maxmem=2G",
+    #"-m", "2G,slots=2,maxmem=4G",       #maxTested
     "-cpu", "qemu64",
     "-smp", "4",  # Use 4 CPU cores
     "-bios", "RELEASEX64_OVMF.fd",
@@ -54,10 +56,9 @@ args = [
 ]
 
 [tasks.debug]
-command = "host-spawn" #"qemu-system-x86_64"
+command = "qemu-system-x86_64"
 dependencies = [ "debug-signal-vscode" ]
 args = [
-    "qemu-system-x86_64",
     # Base machine configuration
     "-machine", "q35,nvdimm=on,pcspk-audiodev=audio0",
     "-m", "256M,slots=2,maxmem=1G",

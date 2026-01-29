@@ -32,8 +32,8 @@
             "label": "qemu-gdb",
             "type": "shell",
             "isBackground": true,
-            "command": "cargo",
-            "args": [ "make", "--no-workspace", "--profile", "development", "debug" ],
+            "command": "host-spawn",
+            "args": [ "cargo", "make", "--no-workspace", "--profile", "development", "debug" ],
             "problemMatcher": [
                 {
                     "pattern": [
