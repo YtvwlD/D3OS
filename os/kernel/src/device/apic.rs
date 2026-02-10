@@ -8,7 +8,7 @@ use acpi::platform::interrupt::{InterruptSourceOverride, NmiSource, Polarity, Tr
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::vec::Vec;
-use log::{info, warn};
+use log::{error, info, warn};
 use raw_cpuid::CpuId;
 use spin::Mutex;
 use uefi::boot::PAGE_SIZE;
@@ -418,6 +418,47 @@ impl Apic {
 
             ticks_per_ms
         }
+    }
+}
+
+/// returns cpu count with bootstrap processor included
+/// can be run before cpus have started up
+/// needed to init perCpu global variables
+pub fn get_cpu_count() -> usize {
+    // Check if APIC is available
+    let cpuid = CpuId::new();
+    match cpuid.get_feature_info() {
+        None => panic!("APIC: Failed to read CPU ID features!"),
+        Some(features) => {
+            if !features.has_apic() {
+                panic!("APIC not available on this system!")
+            }
+        }
+    }
+    // Find APIC relevant structures in ACPI tables
+    let madt_mapping = acpi_tables()
+        .lock()
+        .find_table::<Madt>()
+        .expect("MADT not available");
+    let madt = madt_mapping.get();
+    let int_model = madt
+        .parse_interrupt_model_in(allocator())
+        .expect("Interrupt model not found in MADT");
+    let cpu_info = int_model.1.expect("CPU info not found in interrupt model");
+    let pre_cpu_count = cpu_info.application_processors.len()+1;
+
+    pre_cpu_count
+}
+
+/// returns this cpu's apic id
+/// needed to init perCpu global variables
+pub fn get_apic_id() -> usize {
+    if let Some(feat) = CpuId::new().get_feature_info() {
+        feat.initial_local_apic_id() as usize
+    }
+    else{
+        error!("Problem while reading CPU ID features! APIC ID WILL BE SET TO 1!");
+        1
     }
 }
 

@@ -64,6 +64,7 @@ pub enum InterruptVector {
     // Possibly some other interrupts supported by IO APICs
 
     // Local APIC interrupts (247 - 254)
+    Reschedule = 0xf1, // dedicated reschedule IPI
     Cmci = 0xf8,
     ApicTimer = 0xf9,
     Thermal = 0xfa,
@@ -122,6 +123,7 @@ impl TryFrom<u8> for InterruptVector {
             value if value == InterruptVector::PrimaryAta as u8 => Ok(InterruptVector::PrimaryAta),
             value if value == InterruptVector::SecondaryAta as u8 => Ok(InterruptVector::SecondaryAta),
 
+            value if value == InterruptVector::Reschedule as u8 => Ok(InterruptVector::Reschedule),
             value if value == InterruptVector::Cmci as u8 => Ok(InterruptVector::Cmci),
             value if value == InterruptVector::ApicTimer as u8 => Ok(InterruptVector::ApicTimer),
             value if value == InterruptVector::Thermal as u8 => Ok(InterruptVector::Thermal),
@@ -160,6 +162,11 @@ pub fn setup_idt() {
         let idt_ref = ptr::from_ref(idt.deref()).as_ref().unwrap();
         idt_ref.load();
     }
+}
+
+// gets called once during interrupt initialization (after dispatcher exists)
+pub fn install_reschedule_ipi_handler() {
+    interrupt_dispatcher().assign(InterruptVector::Reschedule, Box::new(crate::interrupt::interrupt_handler::ReschedIpiHandler));
 }
 
 //Similar method for Application Cores

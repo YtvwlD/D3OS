@@ -213,3 +213,23 @@ pub fn send_startup(vector: u8) {
 	unsafe { send(val); }
 	
 }
+
+/// Sends a Fixed IPI to a specific physical APIC ID with the given vector.
+pub fn send_fixed_to_apic(apic_id: usize, vector: u8) {
+	let mut icr = InterruptCommand::new();
+	icr = read_icr_register();
+
+	const DEST_SHORTHAND_NONE: u8 = 0;
+
+	icr.set_vector(vector);
+	icr.set_delivery_mode(IpiDeliveryMode::Fixed as u8);
+	icr.set_destination_mode(IpiDestinationMode::Physical as u8);
+	icr.set_level(IpiLevel::Assert as u8);
+	icr.set_trigger_mode(IpiTriggerMode::EdgeTriggered as u8);
+	icr.set_destination_target(DEST_SHORTHAND_NONE);
+	icr.set_destination(apic_id as u8);
+
+	let val: u64 = icr.into();
+	unsafe { send(val); }
+}
+
