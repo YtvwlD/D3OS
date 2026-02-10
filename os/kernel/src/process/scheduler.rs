@@ -120,11 +120,34 @@ impl Scheduler {
         self.get_ready_state().initialized = true;
     }
 
+    /// returns the number of threads that are currently actively running on this CPU
+    /// does not count sleeping threads
     pub fn active_thread_count(&self) -> usize {
-        let threads_created = THREAD_ID_COUNTER.load(Relaxed);
-        let threads_killed = THREAD_KILLED_COUNTER.load(Relaxed);
-        threads_created - threads_killed
+        let mut sum: u32 = 0;
+        let active = ACTIVE_CPUS.load(Relaxed);
+        for i in 0..active {
+            let rq = per_cpu_ref(i as usize).rq_len.load(core::sync::atomic::Ordering::Acquire);
+            // Detect runaway counters without panicking the whole kernel in debug
+            match sum.checked_add(rq) {
+                Some(s) => sum = s,
+                None => {
+                    log::error!("active_thread_count overflow while adding cpu {} rq_len={}", i, rq);
+                    return usize::MAX; // saturate to a sentinel
+                }
+            }
+        }
+        // include the currently-running thread on each CPU:
+        //sum += active;
+
+        // Clamp to usize on 32-bit safely (and give a clear sentinel on 32-bit if it ever overflows)
+        if sum > usize::MAX as u32 {
+            log::error!("active_thread_count exceeds usize: {}", sum);
+            usize::MAX
+        } else {
+            sum as usize
+        }
     }
+
 
     /// Get all active thread IDs
     pub fn active_thread_ids(&self) -> Vec<usize> {
@@ -199,6 +222,7 @@ impl Scheduler {
             self.switch_thread_no_interrupt();
         };
 
+        inc_rq_len();
         state.ready_queue.push_front(thread);
         join_map.insert(id, Vec::new());
     }
@@ -224,6 +248,7 @@ impl Scheduler {
             }
 
             self.block_and_switch(&mut state);
+            dec_rq_len();
         }
     }
 
@@ -245,8 +270,8 @@ impl Scheduler {
                 block_list.push(thread);
             } // drop lock for block_list
             //info!("Scheduler::block: switch to next thread");
-            thread_removed();
             self.block_and_switch(&mut state);
+            dec_rq_len();
         }
     }
 
@@ -257,7 +282,7 @@ impl Scheduler {
         if let Some(pos) = block_list.iter().position(|thread| thread.id() == tid && thread.process().id() == pid) {
             let thread = block_list.remove(pos);
             self.ready(thread);
-            thread_deblocked();
+            inc_rq_len();
         }
     }
 
@@ -281,7 +306,7 @@ impl Scheduler {
             let mut join_map = self.join_map.lock();
             if let Some(join_list) = join_map.get_mut(&thread_id) {
                 join_list.push(thread);
-                thread_removed();
+                dec_rq_len();
             } else {
                 // Joining on a non-existent thread has no effect (i.e. the thread has already finished running)
                 return;
@@ -289,6 +314,7 @@ impl Scheduler {
         }
 
         self.block_and_switch(&mut state);
+        dec_rq_len();
     }
 
     /// Exit calling thread.
@@ -307,13 +333,13 @@ impl Scheduler {
 
             for thread in join_list {
                 ready_state.ready_queue.push_front(Arc::clone(thread));
-                thread_deblocked();
+                inc_rq_len();
             }
 
             join_map.remove(&current.id());
         }
 
-        thread_removed();
+        dec_rq_len();
         drop(current); // Decrease Rc manually, because block() does not return
         self.block_and_switch(&mut ready_state);
         unreachable!()
@@ -340,7 +366,7 @@ impl Scheduler {
 
         for thread in join_list {
             ready_state.ready_queue.push_front(Arc::clone(thread));
-            thread_deblocked();
+            inc_rq_len();
         }
 
         join_map.remove(&thread_id);
@@ -350,7 +376,7 @@ impl Scheduler {
         let after = ready_state.ready_queue.len();
 
         if before != after {
-            thread_removed();
+            dec_rq_len();
         }
     }
 
@@ -522,6 +548,7 @@ impl Scheduler {
         sleep_list.retain(|entry| {
             if time >= entry.1 {
                 state.ready_queue.push_front(Arc::clone(&entry.0));
+                inc_rq_len();
                 false
             } else {
                 true
