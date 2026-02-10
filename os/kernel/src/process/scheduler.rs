@@ -556,6 +556,119 @@ impl Scheduler {
         }
     }
 }
+
+
+//// Multicore support  ////
+
+/// Helper struct to store shared public information of a core
+#[repr(align(64))]
+pub struct PerCpuSched {
+    // Approximate runqueue length (owner updates, others read)
+    pub rq_len: AtomicU32,
+    pub resched_flag: AtomicBool,
+    pub tx: Sender<Option<WorkItem>>,    // producers (remote cores)
+    pub apic_id: AtomicUsize,
+}
+
+/// Wrapper struct to store a thread and possible future meta data
+#[derive(Clone)]
+pub struct WorkItem { pub thread: Arc<Thread>, }
+
+impl WorkItem { pub fn new(thread: Arc<Thread>) -> Self { Self { thread } } }
+
+// Global table indexed by core_id
+static PER_CPU_SCHED: Once<&'static [PerCpuSched]> = Once::new();
+
+static PER_CPU_RX: Once<&'static [Mutex<Option<Receiver<Option<WorkItem>>>>]> = Once::new();
+
+unsafe impl Sync for PerCpuSched {}
+
+pub fn per_cpu_init(cpu_count: usize, capacity: usize) {
+    let mut publics = Vec::with_capacity(cpu_count);
+    let mut receivers = Vec::with_capacity(cpu_count);
+
+    for _ in 0..cpu_count {
+        let (tx, rx) = mpsc::channel::<Option<WorkItem>>(capacity);
+        publics.push(PerCpuSched {
+            rq_len: AtomicU32::new(0),
+            resched_flag: AtomicBool::new(false),
+            tx,
+            apic_id: AtomicUsize::new(0),
+        });
+        receivers.push(Mutex::new(Some(rx)));
+    }
+
+    let leaked_cpu_slice: &'static [PerCpuSched] = Box::leak(publics.into_boxed_slice());
+    PER_CPU_SCHED.call_once(|| leaked_cpu_slice);
+    let leaked_receiver_slice: &'static [Mutex<Option<Receiver<Option<WorkItem>>>>]
+        = Box::leak(receivers.into_boxed_slice());
+    PER_CPU_RX.call_once(|| leaked_receiver_slice);
+}
+
+// Called only once by each owner core during startup to move the RX into its CLS
+pub fn take_inbox_receiver(id: usize) -> Receiver<Option<WorkItem>> {
+    let bank = PER_CPU_RX.get().expect("per_cpu_init not called");
+    let mut guard = bank[id].lock();
+    guard.take().expect("Receiver already taken")
+}
+
+// Returns the apic_id of the core with the given id
+pub fn per_cpu_apic_id(cpu_id: usize) -> usize {
+    per_cpu_ref(cpu_id).apic_id.load(Ordering::Acquire)
+}
+
+// Returns a reference to the PerCpuSched struct of the core with the given id
+#[inline]
+pub fn per_cpu_ref(id: usize) -> &'static PerCpuSched {
+    let slice = PER_CPU_SCHED.get().expect("per_cpu_init not called");
+    &slice[id]
+}
+
+// Returns a reference to the PerCpuSched struct of the current core
+#[inline]
+pub fn per_cpu_ref_curr() -> &'static PerCpuSched {
+    per_cpu_ref(current_core_id() as usize)
+}
+
+// Returns a reference to the sender out of the PerCpuSched struct of the core with the given id
+#[inline]
+pub fn per_cpu_sender(id: usize) -> &'static Sender<Option<WorkItem>> {
+    &per_cpu_ref(id).tx
+}
+
+/// Owner function to increase the runqueue length of the current core.
+pub fn inc_rq_len() {
+    let id = current_core_id() as usize;
+    //info!("rq increased by 1 on core {}:",id);
+    per_cpu_ref(id).rq_len.fetch_add(1, Ordering::Relaxed);
+}
+/// Owner function to decrease the runqueue length of the current core.
+pub fn dec_rq_len() {
+    let id = current_core_id() as usize;
+    //info!("rq decreased by 1 on core {}:",id);
+    per_cpu_ref(id).rq_len.fetch_sub(1, Ordering::Release); // Release for stronger publication before donating
+}
+/// Owner function to read the runqueue length of the current core.
+pub fn read_rq_len() -> u32 {
+    per_cpu_ref(current_core_id() as usize).rq_len.load(Ordering::Acquire)
+}
+/// Owner function to set the reschedule flag of the current core.
+pub fn set_resched_flag() {
+    per_cpu_ref(current_core_id() as usize).resched_flag.store(true, Ordering::Release);
+}
+/// Owner function to clear the reschedule flag of the current core.
+pub fn clear_resched_flag() {
+    per_cpu_ref(current_core_id() as usize).resched_flag.store(false, Ordering::Release);
+}
+/// Owner function to read the reschedule flag of the current core.
+pub fn read_resched_flag() -> bool {
+    per_cpu_ref(current_core_id() as usize).resched_flag.load(Ordering::Acquire)
+}
+/// Remote Reader function to read the runqueue length of the given Core
+pub fn read_rq_len_remote(target_id: usize) -> u32 {
+    per_cpu_ref(target_id).rq_len.load(Ordering::Acquire)
+}
+
 //TODO: delete this method
 pub fn debugger_breakpoint_outside_lib() -> usize {
     return 0;
