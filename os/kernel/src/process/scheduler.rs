@@ -24,18 +24,24 @@
    ║ Author: Fabian Ruhland, 05.09.2025, HHU                                 ║
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
+use alloc::boxed::Box;
 use crate::process::thread::Thread;
-use crate::{allocator, apic, current_core_id, preempt_is_disabled, request_reschedule, scheduler, timer, tss};
+use crate::{allocator, apic, cls, current_core_id, preempt_is_disabled, request_reschedule, scheduler, timer, tss};
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::{panic, ptr};
-use core::sync::atomic::AtomicUsize;
+use core::arch::asm;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::sync::atomic::AtomicU32;
-use core::sync::atomic::Ordering::Relaxed;
-use log::info;
+use core::sync::atomic::Ordering::{Relaxed};
+use log::{info, log};
 use smallmap::Map;
-use spin::{Mutex, MutexGuard};
+use spin::{Mutex, MutexGuard, Once};
+use thingbuf::mpsc;
+use thingbuf::mpsc::{Receiver, Sender};
+use crate::device::cpu::{disable_int_nested, enable_int_nested};
+use crate::ipi::send_fixed_to_apic;
 
 // thread IDs
 pub static THREAD_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -636,6 +642,23 @@ pub fn per_cpu_sender(id: usize) -> &'static Sender<Option<WorkItem>> {
     &per_cpu_ref(id).tx
 }
 
+/// Schedules a thread (wrapped in a WorkItem) on a remote core with the target_id
+/// Sends a reschedule IPI to wake that core up, if it was idle.
+pub fn schedule_on(target_id: usize, item: WorkItem) -> Result<(), WorkItem> {
+    let pc = per_cpu_ref(target_id);
+    match pc.tx.try_send(Some(item)) {
+        Ok(()) => {
+            send_reschedule_ipi(target_id);
+            Ok(())
+        }
+        Err(e) => Err(e.into_inner().unwrap()), // unwrap: we sent Some(_)
+    }
+}
+
+/// Sends a Reschedule IPI to wake the core with the given id up, if it was idle.
+fn send_reschedule_ipi(target_id: usize) {
+    send_fixed_to_apic(per_cpu_apic_id(target_id),0xf1)
+}
 /// Owner function to increase the runqueue length of the current core.
 pub fn inc_rq_len() {
     let id = current_core_id() as usize;
@@ -667,6 +690,13 @@ pub fn read_resched_flag() -> bool {
 /// Remote Reader function to read the runqueue length of the given Core
 pub fn read_rq_len_remote(target_id: usize) -> u32 {
     per_cpu_ref(target_id).rq_len.load(Ordering::Acquire)
+}
+
+//idle_thread thread that halts the cpu and until it gets woken up by interrupts
+extern "sysv64" fn idle_thread () -> () {   //should never return but new_kernel_thread requires it
+    loop {
+        unsafe { asm!("hlt"); }
+    }
 }
 
 //TODO: delete this method
