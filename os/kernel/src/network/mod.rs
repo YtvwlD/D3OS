@@ -1,11 +1,15 @@
 use alloc::collections::btree_map::BTreeMap;
+use alloc::format;
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use smoltcp::phy::Loopback;
 use smoltcp::socket::dns::GetQueryResultError;
 use core::net::{Ipv4Addr, Ipv6Addr};
-use core::ops::Deref;
+use core::ops::{Deref, DerefMut};
 use core::ptr;
+use core::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use log::{info, warn};
 use smoltcp::iface::{self, Interface, SocketHandle, SocketSet};
 use smoltcp::socket;
@@ -18,18 +22,102 @@ use crate::process::process::Process;
 use crate::{pci_bus, process_manager, scheduler, timer};
 use crate::process::thread::Thread;
 
+static INTERFACES: RwLock<BTreeMap<String, Arc<NetworkInterface>>> = RwLock::new(BTreeMap::new());
+static ETHERNET_COUNT: AtomicU8 = AtomicU8::new(0);
 
-static RTL8139: Once<Arc<Rtl8139>> = Once::new();
+/// This maps processes to their sockets.
+/// process ID -> [`PerProcessSocketSet`]
+static SOCKET_PROCESS: RwLock<BTreeMap<usize, RwLock<PerProcessSocketSet>>> = RwLock::new(BTreeMap::new());
+static DNS_SOCKET: Once<SocketId> = Once::new();
+static DHCP_SOCKET: Once<SocketId> = Once::new();
 
-static INTERFACES: RwLock<Vec<Interface>> = RwLock::new(Vec::new());
-static SOCKETS: Once<RwLock<SocketSet>> = Once::new();
-/// This maps sockets to the respective process.
-/// We use this to check whether a process can access a particular socket.
-/// We can't just create a SocketSet per process because smoltcp drops all
-/// packets for non-existing sockets when polling.
-static SOCKET_PROCESS: RwLock<BTreeMap<SocketHandle, Arc<Process>>> = RwLock::new(BTreeMap::new());
-static DNS_SOCKET: Once<SocketHandle> = Once::new();
-static DHCP_SOCKET: Once<SocketHandle> = Once::new();
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Copy, Clone)]
+struct SocketId(u64);
+
+/// This struct represents a single network interface.
+/// 
+/// It contains the actual device, the smoltcp interface and the sockets
+/// associated with this device.
+struct NetworkInterface {
+    device: NetworkDevice,
+    interface: RwLock<Interface>,
+    sockets: RwLock<SocketSet<'static>>,
+}
+
+impl NetworkInterface {
+    fn new(device: NetworkDevice, interface: Interface) -> Self {
+        let sockets = RwLock::new(SocketSet::new(Vec::new()));
+        Self { device, interface: RwLock::new(interface), sockets }
+    }
+    
+    fn poll(&self) {
+        let time = Instant::from_millis(timer().systime_ms() as i64);
+        // TODO: this might become a deadlock
+        self.device.poll(self.interface.write().deref_mut(), self.sockets.write().deref_mut(), time);
+    }
+}
+
+impl alloc::fmt::Debug for NetworkInterface {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f
+            .debug_struct("NetworkInterface")
+            .field("device", &self.device)
+            .field("sockets", &self.sockets.read().iter().count()).finish()
+    }
+}
+
+enum NetworkDevice {
+    Rtl8139(Arc<Rtl8139>),
+    Loopback(Loopback),
+}
+
+impl NetworkDevice {
+    fn poll(&self, interface: &mut Interface, sockets: &mut SocketSet<'static>, time: Instant) -> iface::PollResult {
+        match self {
+            NetworkDevice::Rtl8139(device) => {
+                // The Smoltcp interface struct wants a mutable reference to the device.
+                // However, the RTL8139 driver is designed to work with shared references.
+                // Since smoltcp does not actually store the mutable reference anywhere,
+                // we can safely cast the shared reference to a mutable one.
+                // (Actually, I am not sure why the smoltcp interface wants a mutable reference to the device,
+                // since it does not modify the device itself.)
+                let device = unsafe { ptr::from_ref(device.deref().deref()).cast_mut().as_mut().unwrap() };
+                
+                interface.poll(time, device, sockets)
+            },
+            NetworkDevice::Loopback(loopback) => todo!(),
+        }
+    }
+}
+
+impl alloc::fmt::Debug for NetworkDevice {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Rtl8139(_) => f.debug_tuple("Rtl8139").finish(),
+            Self::Loopback(_) => f.debug_tuple("Loopback").finish(),
+        }
+    }
+}
+
+/// This contains the sockets of a process.
+/// 
+/// The counter generates increasing IDs.
+/// Each socket ID corresponds to one or more smoltcp SocketHandles.
+#[derive(Debug, Default)]
+struct PerProcessSocketSet {
+    counter: AtomicU64,
+    sockets: BTreeMap<SocketId, Vec<(Arc<NetworkInterface>, SocketHandle)>>,
+}
+
+impl PerProcessSocketSet {
+    /// Insert these interface-handle-pairs, returning a new ID.
+    fn insert(&mut self, interface_handle: Vec<(String, SocketHandle)>) -> SocketId {
+        let id = SocketId(self.counter.fetch_add(1, Ordering::SeqCst));
+        self.sockets.try_insert(id, interface_handle)
+            .expect("failed to insert socket in per-process socket set");
+        id
+    }
+}
 
 #[derive(Debug)]
 #[repr(u8)]
@@ -39,25 +127,11 @@ pub enum SocketType {
 }
 
 pub fn init() {
-    SOCKETS.call_once(|| RwLock::new(SocketSet::new(Vec::new())));
-
-    let devices = pci_bus().search_by_ids(0x10ec, 0x8139);
-    if !devices.is_empty() {
-        RTL8139.call_once(|| {
-            info!("Found Realtek RTL8139 network controller");
-            let rtl8139 = Arc::new(Rtl8139::new(devices[0]));
-            info!("RTL8139 MAC address: [{}]", rtl8139.read_mac_address());
-
-            Rtl8139::plugin(Arc::clone(&rtl8139));
-            rtl8139
-        });
-    }
-
-    if let Some(rtl8139) = RTL8139.get() {
-        extern "sysv64" fn poll() {
-            loop { poll_sockets(); scheduler().switch_thread_no_interrupt(); }
-        }
-        scheduler().ready(Thread::new_kernel_thread(poll, "RTL8139"));
+    for device in pci_bus().search_by_ids(0x10ec, 0x8139) {
+        info!("Found Realtek RTL8139 network controller");
+        let rtl8139 = Arc::new(Rtl8139::new(device));
+        info!("RTL8139 MAC address: [{}]", rtl8139.read_mac_address());
+        Rtl8139::plugin(Arc::clone(&rtl8139));
         
         // Set up network interface
         let time = timer().systime_ms();
@@ -71,32 +145,48 @@ pub fn init() {
         // (Actually, I am not sure why the smoltcp interface wants a mutable reference to the device,
         // since it does not modify the device itself.)
         let device = unsafe { ptr::from_ref(rtl8139.deref()).cast_mut().as_mut().unwrap() };
-        add_interface(Interface::new(conf, device, Instant::from_millis(time as i64)));
+        let interface = Interface::new(conf, device, Instant::from_millis(time as i64));        
+        
+        let index = ETHERNET_COUNT.fetch_add(1, Ordering::SeqCst);
+        INTERFACES.write().try_insert(format!("eth{index}"), NetworkInterface::new(
+            NetworkDevice::Rtl8139(rtl8139), interface,
+        )).expect("network interface does already exist");
+    }
 
-        let sockets = SOCKETS.get().expect("Socket set not initialized!");
+    // Add DHCP and DNS on the first ethernet interface if we have one.
+    if let Some((name, mut interface)) = INTERFACES
+        .read()
+        .iter()
+        .filter(|(name, interface)| !matches!(interface.read().device, NetworkDevice::Loopback(_)))
+        .next()
+        .map(|(name, interface)| (name, interface.write())) {
         let current_process = process_manager().read().current_process();
-        let mut process_map = SOCKET_PROCESS.write();
+        let mut socket_process = SOCKET_PROCESS
+            .write();
+        let mut process_map = socket_process
+            .try_insert(current_process.id, RwLock::default())
+            .expect("failed to create socket set for kernel process")
+            .write();
         // setup DNS
         DNS_SOCKET.call_once(|| {
             let dns_socket = dns::Socket::new(&[], Vec::new());
-            let dns_handle = sockets.write().add(dns_socket);
+            let dns_handle = interface.sockets.add(dns_socket);
             process_map
-                .try_insert(dns_handle, current_process.clone())
-                .expect("failed to insert socket into socket-process map");
-            dns_handle
+                .insert(vec![(name.clone(), dns_handle)])
         });
         // request an IP address via DHCP
         DHCP_SOCKET.call_once(|| {
             let dhcp_socket = dhcpv4::Socket::new();
-            let dhcp_handle = sockets
-                .write()
-                .add(dhcp_socket);
+            let dhcp_handle = interface.sockets.add(dhcp_socket);
             process_map
-                .try_insert(dhcp_handle, current_process)
-                .expect("failed to insert socket into socket-process map");
-            dhcp_handle
+                .insert(vec![(name.clone(), dhcp_handle)])
         });
     }
+    
+    extern "sysv64" fn poll() {
+        loop { poll_sockets(); scheduler().switch_thread_no_interrupt(); }
+    }
+    scheduler().ready(Thread::new_kernel_thread(poll, "network"));
 }
 
 fn check_ownership(handle: SocketHandle) {
@@ -119,10 +209,6 @@ macro_rules! get_socket_for_current_process {
     }
 }
 
-fn add_interface(interface: Interface) {
-    INTERFACES.write().push(interface);
-}
-
 /// Get IP addresses for a host.
 /// 
 /// If host is none, get the addresses of the current host.
@@ -131,15 +217,26 @@ pub fn get_ip_addresses(host: Option<&str>) -> Vec<IpAddress> {
         let handle = DNS_SOCKET.get().expect("DNS socket does not exist yet");
         // first, start the queries
         let mut query_handles: Vec<_> = {
-            let mut interfaces = INTERFACES.write();
-            let interface = interfaces.get_mut(0).expect("network interface is missing");
-            let mut sockets = SOCKETS.get().expect("Socket set not initialized!").write();
-            let socket = sockets.get_mut::<dns::Socket>(*handle);
+            let socket_process = SOCKET_PROCESS.read();
+            let kernel_sockets = socket_process.get(&0)
+                .expect("failed to get sockets of the kernel process")
+                .read();
+            let (interface_name, handle) = kernel_sockets.sockets
+                .get(DNS_SOCKET.get().expect("failed to get DNS socket ID"))
+                .expect("failed to get DNS sockets")
+                .iter().next()
+                .expect("failed to get DNS socket");
+            let interfaces = INTERFACES.read();
+            let mut interface = interfaces
+                .get(interface_name)
+                .expect("failed to get DNS interface")
+                .write();
+            let socket = interface.sockets.get_mut::<dns::Socket>(*handle);
             [DnsQueryType::Aaaa, DnsQueryType::A, DnsQueryType::Cname]
                 .into_iter()
                 .filter_map(|ty|
                         socket
-                            .start_query(interface.context(), host, ty)
+                            .start_query(interface.interface.context(), host, ty)
                             .map_err(|e| {
                                 warn!("DNS query for {host} {ty:?} failed: {e:?}");
                                 e
@@ -152,8 +249,21 @@ pub fn get_ip_addresses(host: Option<&str>) -> Vec<IpAddress> {
         let mut resulting_ips = Vec::new();
         loop {
             {
-                let mut sockets = SOCKETS.get().expect("Socket set not initialized!").write();
-                let socket = sockets.get_mut::<dns::Socket>(*handle);
+                let socket_process = SOCKET_PROCESS.read();
+                let kernel_sockets = socket_process.get(&0)
+                    .expect("failed to get sockets of the kernel process")
+                    .read();
+                let (interface_name, handle) = kernel_sockets.sockets
+                    .get(DNS_SOCKET.get().expect("failed to get DNS socket ID"))
+                    .expect("failed to get DNS sockets")
+                    .iter().next()
+                    .expect("failed to get DNS socket");
+                let interfaces = INTERFACES.read();
+                let mut interface = interfaces
+                    .get(interface_name)
+                    .expect("failed to get DNS interface")
+                    .write();
+                let socket = interface.sockets.get_mut::<dns::Socket>(*handle);
                 let mut remaining: Vec<_> = query_handles
                     .drain(..)
                     .filter(|query| match socket.get_query_result(*query) {
@@ -185,12 +295,14 @@ pub fn get_ip_addresses(host: Option<&str>) -> Vec<IpAddress> {
         }
         resulting_ips
     } else {
-        INTERFACES
-            .read()
-            .iter()
-            .flat_map(Interface::ip_addrs)
-            .map(IpCidr::address)
-            .collect()
+        let mut ip_addrs = Vec::new();
+        for (_name, interface) in INTERFACES.read().iter() {
+            let lock = interface.read();
+            ip_addrs.extend(
+                lock.interface.ip_addrs().iter().map(IpCidr::address)
+            );
+        }
+        ip_addrs
     }
 }
 
@@ -327,7 +439,7 @@ pub fn accept_tcp(handle: SocketHandle) -> Result<(IpEndpoint, SocketHandle), tc
 }
 
 pub fn connect_tcp(handle: SocketHandle, host: IpAddress, port: u16) -> Result<IpEndpoint, tcp::ConnectError> {    get_socket_for_current_process!(socket, handle, tcp::Socket);
-    let mut interfaces = INTERFACES.write();
+    let mut interfaces = IFACES.write();
     let interface = interfaces.get_mut(0).ok_or(tcp::ConnectError::InvalidState)?;
     let local_port = pick_port(0);
 
@@ -420,58 +532,67 @@ pub fn can_send(handle: SocketHandle, protocol: SocketType) -> bool {
 }
 
 /// Try to poll all sockets.
-/// 
-/// This returns None, if it failed to get all needed locks.
-/// This is needed, because we otherwise might get a deadlock, because an
-/// application has the lock on `sockets` while we have the lock on `interfaces`.
-fn poll_sockets() -> Option<()> {
-    let rtl8139 = RTL8139.get().expect("RTL8139 not initialized");
-    let mut interfaces = INTERFACES.try_write()?;
-    let mut sockets = SOCKETS.get().expect("Socket set not initialized!").try_write()?;
-    let time = Instant::from_millis(timer().systime_ms() as i64);
-
-    // Smoltcp expects a mutable reference to the device, but the RTL8139 driver is built
-    // to work with a shared reference. We can safely cast the shared reference to a mutable.
-    let device = unsafe { ptr::from_ref(rtl8139.deref()).cast_mut().as_mut().unwrap() };
-    let interface = interfaces.get_mut(0).expect("failed to get interface");
-
-    let mut poll_budget = 16;
-    while poll_budget > 0 {
-        match interface.poll(time, device, &mut sockets) {
-            iface::PollResult::None => break,
-            iface::PollResult::SocketStateChanged => {
-                poll_budget -= 1;
-            },
+fn poll_sockets() -> () {
+    for interface in INTERFACES.read().values() {
+        let mut poll_budget = 16;
+        while poll_budget > 0 {
+            match interface.poll() {
+                iface::PollResult::None => break,
+                iface::PollResult::SocketStateChanged => {
+                    poll_budget -= 1;
+                },
+            }
         }
     }
-
+    
     // DHCP handling is based on https://github.com/smoltcp-rs/smoltcp/blob/main/examples/dhcp_client.rs
-    let dhcp_handle = DHCP_SOCKET.get().expect("DHCP socket does not exist yet");
-    let dhcp_socket = sockets.get_mut::<dhcpv4::Socket>(*dhcp_handle);
+    // This code assumes that DHCP and DNS are on the same single interface.
+    let dhcp_id = DHCP_SOCKET.get().expect("DHCP socket does not exist yet");
+    let current_process = process_manager().read().current_process();
+    let socket_process = SOCKET_PROCESS
+        .read();
+    let process_sockets = socket_process
+        .get(&current_process.id)
+        .expect("failed to get socket set for kernel process")
+        .write();
+    let interfaces = INTERFACES
+        .read();
+    let (dhcp_interface_name, dhcp_handle) = process_sockets.sockets
+        .get(dhcp_id)
+        .expect("failed to get DHCP sockets")
+        .iter().next()
+        .expect("failed to get DHCP socket");
+    let dhcp_interface = interfaces
+        .get(dhcp_interface_name)
+        .expect("failed to get DHCP interface");
+    let mut dhcp_write = dhcp_interface.sockets.write();
+    let dhcp_socket = dhcp_write.get_mut::<dhcpv4::Socket>(*dhcp_handle);
     if let Some(event) = dhcp_socket.poll() {
         match event {
             dhcpv4::Event::Deconfigured => {
                 info!("lost DHCP lease");
-                interface.update_ip_addrs(|addrs| addrs.clear());
-                interface.routes_mut().remove_default_ipv4_route();
+                let mut write = dhcp_interface.interface.write();
+                write.update_ip_addrs(|addrs| addrs.clear());
+                write.routes_mut().remove_default_ipv4_route();
             },
             dhcpv4::Event::Configured(config) => {
                 info!("acquired DHCP lease:");
                 info!("IP address: {}", config.address);
-                interface.update_ip_addrs(|addrs| {
+                let mut write = dhcp_interface.interface.write();
+                write.update_ip_addrs(|addrs| {
                     addrs.clear();
                     addrs.push(IpCidr::Ipv4(config.address)).unwrap();
                 });
 
                 if let Some(router) = config.router {
                     info!("default gateway: {router}");
-                    interface
+                    write
                         .routes_mut()
                         .add_default_ipv4_route(router)
                         .unwrap();
                 } else {
                     info!("no default gateway");
-                    interface
+                    write
                         .routes_mut()
                         .remove_default_ipv4_route();
                 }
@@ -480,8 +601,14 @@ fn poll_sockets() -> Option<()> {
                     .iter()
                     .map(|ip| IpAddress::Ipv4(*ip))
                     .collect();
-                let dns_handle = DNS_SOCKET.get().expect("DNS socket does not exist yet");
-                let dns_socket = sockets.get_mut::<dns::Socket>(*dns_handle);
+                let dns_socket_id = DNS_SOCKET.get().expect("DNS socket does not exist yet");
+                let (_, dns_handle) = process_sockets.sockets
+                    .get(dns_socket_id)
+                    .expect("failed to get DNS sockets")
+                    .iter().next()
+                    .expect("failed to get DNS socket");
+                let mut dns_write = dhcp_interface.sockets.write();
+                let dns_socket = dns_write.get_mut::<dns::Socket>(*dns_handle);
                 dns_socket.update_servers(&dns_servers);
             },
         }
@@ -517,8 +644,6 @@ fn poll_sockets() -> Option<()> {
         info!("Garbage collecting closed socket: {}", handle);
         sockets.remove(handle);
     }
-
-    Some(())
 }
 
 pub(crate) fn close_sockets_for_process(process: &mut Process) {
