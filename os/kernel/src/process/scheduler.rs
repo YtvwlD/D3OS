@@ -72,6 +72,7 @@ pub struct ReadyState {
     initialized: bool,
     current_thread: Option<Arc<Thread>>,
     ready_queue: VecDeque<Arc<Thread>>,
+    idle_thread: Arc<Thread>
 }
 
 impl ReadyState {
@@ -80,6 +81,7 @@ impl ReadyState {
             initialized: false,
             current_thread: None,
             ready_queue: VecDeque::new(),
+            idle_thread: Thread::new_kernel_thread(idle_thread, "idle"),
         }
     }
 }
@@ -198,6 +200,9 @@ impl Scheduler {
         self.has_started = true;
         let mut state = self.get_ready_state();
         state.current_thread = state.ready_queue.pop_back();
+        if state.current_thread.is_none() {
+            state.current_thread = Some(Arc::clone(&state.idle_thread));
+        }
 
         unsafe { Thread::start_first(state
             .current_thread.as_ref()
@@ -247,8 +252,8 @@ impl Scheduler {
                 sleep_list.push((thread, wakeup_time));
             }
 
-            self.block_and_switch(&mut state);
             dec_rq_len();
+            self.block_and_switch(state);
         }
     }
 
@@ -270,8 +275,8 @@ impl Scheduler {
                 block_list.push(thread);
             } // drop lock for block_list
             //info!("Scheduler::block: switch to next thread");
-            self.block_and_switch(&mut state);
             dec_rq_len();
+            self.block_and_switch(state);
         }
     }
 
@@ -313,8 +318,8 @@ impl Scheduler {
             }
         }
 
-        self.block_and_switch(&mut state);
         dec_rq_len();
+        self.block_and_switch(state);
     }
 
     /// Exit calling thread.
@@ -341,7 +346,7 @@ impl Scheduler {
 
         dec_rq_len();
         drop(current); // Decrease Rc manually, because block() does not return
-        self.block_and_switch(&mut ready_state);
+        self.block_and_switch(ready_state);
         unreachable!()
     }
 
@@ -425,23 +430,27 @@ impl Scheduler {
     }
 
     /// Block calling thread and switch to next ready thread.
-    fn block_and_switch(&self, state: &mut ReadyState) {
+    fn block_and_switch(&self, mut state: MutexGuard<ReadyState>) {
         let mut next_thread = state.ready_queue.pop_back();
 
         {
             // Execute in own block, so that the lock is released automatically (block() does not return)
             let mut sleep_list = self.sleep_list.lock();
-            while next_thread.is_none() {
-                Scheduler::check_sleep_list(state, &mut sleep_list);
+            if next_thread.is_none() {
+                Scheduler::check_sleep_list(&mut state, &mut sleep_list);
                 state = self.drain_inbox_into_ready(10, state);
                 next_thread = state.ready_queue.pop_back();
+                if next_thread.is_none() {  //still no new thread => switch to idle
+                    next_thread = Some(Arc::clone(&state.idle_thread));
+                }
             }
         }
 
-        let current = Scheduler::current(state);
+        let current = Scheduler::current(&mut state);
         let next = next_thread.unwrap();
 
-        // Thread has enqueued itself into sleep list and waited so long, that it dequeued itself in the meantime
+        // Thread has enqueued itself into sleep list and waited so long,
+        // that it dequeued itself in the meantime
         if current.id() == next.id() {
             return;
         }
@@ -486,6 +495,7 @@ impl Scheduler {
 
             // Get clone of the current thread
             let current = Scheduler::current(&state);
+            let current_was_idle = current.id() == state.idle_thread.id();
 
             // Current thread is initializing itself and may not be interrupted
             if current.stacks_locked() || tss().is_locked() {
@@ -502,7 +512,12 @@ impl Scheduler {
                     if interrupt {
                         apic().end_of_interrupt();
                     }
-                    return;
+                    //no new thread & idle thread already active => nothing to do
+                    if current_was_idle {
+                        return;
+                    }
+                    //no new thread & last!=idle => switch to idle
+                    Arc::clone(&state.idle_thread)
                 },
             };
 
@@ -510,7 +525,11 @@ impl Scheduler {
             let next_ptr = ptr::from_ref(next.as_ref());
 
             state.current_thread = Some(next);
-            state.ready_queue.push_front(current);
+
+            // last!=idle => we need to enqueue it back in the readyQueue
+            if current_was_idle == false {
+                state.ready_queue.push_front(current);
+            }
 
             if interrupt {
                 apic().end_of_interrupt();
@@ -710,6 +729,7 @@ static PER_CPU_RX: Once<&'static [Mutex<Option<Receiver<Option<WorkItem>>>>]> = 
 
 unsafe impl Sync for PerCpuSched {}
 
+/// Called only once by the boot processor core during startup to initialize the global tables
 pub fn per_cpu_init(cpu_count: usize, capacity: usize) {
     let mut publics = Vec::with_capacity(cpu_count);
     let mut receivers = Vec::with_capacity(cpu_count);
@@ -732,32 +752,32 @@ pub fn per_cpu_init(cpu_count: usize, capacity: usize) {
     PER_CPU_RX.call_once(|| leaked_receiver_slice);
 }
 
-// Called only once by each owner core during startup to move the RX into its CLS
+/// Called only once by each owner core during startup to move the RX into its CLS
 pub fn take_inbox_receiver(id: usize) -> Receiver<Option<WorkItem>> {
     let bank = PER_CPU_RX.get().expect("per_cpu_init not called");
     let mut guard = bank[id].lock();
     guard.take().expect("Receiver already taken")
 }
 
-// Returns the apic_id of the core with the given id
+/// Returns the apic_id of the core with the given id
 pub fn per_cpu_apic_id(cpu_id: usize) -> usize {
     per_cpu_ref(cpu_id).apic_id.load(Ordering::Acquire)
 }
 
-// Returns a reference to the PerCpuSched struct of the core with the given id
+/// Returns a reference to the PerCpuSched struct of the core with the given id
 #[inline]
 pub fn per_cpu_ref(id: usize) -> &'static PerCpuSched {
     let slice = PER_CPU_SCHED.get().expect("per_cpu_init not called");
     &slice[id]
 }
 
-// Returns a reference to the PerCpuSched struct of the current core
+/// Returns a reference to the PerCpuSched struct of the current core
 #[inline]
 pub fn per_cpu_ref_curr() -> &'static PerCpuSched {
     per_cpu_ref(current_core_id() as usize)
 }
 
-// Returns a reference to the sender out of the PerCpuSched struct of the core with the given id
+/// Returns a reference to the sender out of the PerCpuSched struct of the core with the given id
 #[inline]
 pub fn per_cpu_sender(id: usize) -> &'static Sender<Option<WorkItem>> {
     &per_cpu_ref(id).tx
