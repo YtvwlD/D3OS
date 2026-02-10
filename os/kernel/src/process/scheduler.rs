@@ -348,19 +348,45 @@ impl Scheduler {
         }
     }
 
+    /// Gives out current thread id, then calls other debug methods
+    pub fn debug_scheduler(&self) {
+        let state = self.get_ready_state();
+        let sleep_list = self.sleep_list.lock();
+        let nested = disable_int_nested();
+        let id = current_core_id();
+        let nbr_threads = self.active_thread_count() as u32;
+        let own_threads = read_rq_len() as u32;
+        let nbr_cpus = ACTIVE_CPUS.load(Relaxed);
+        info!("Scheduler {}: Current thread: {}", id, Scheduler::current(&state).id());
+        info!("Scheduler{}: total_threads: {}, own_threads: {}, cpus: {}",
+                id, nbr_threads, own_threads, nbr_cpus);
+        info!("Scheduler {}: Ready queue:", id);
+        for thread in &state.ready_queue {
+            info!("  - {}", thread.id());
+        }
+        info!("Scheduler {}: Sleep list:", id);
+        for thread in sleep_list.iter() {
+            info!("  - {}, {}", thread.0.id(), thread.1);
+        }
+        enable_int_nested(nested);
+    }
+
+    /// Debugging function to print all threads in the ready queue.
     pub fn debug_ready_queue(&self) {
         let state = self.get_ready_state();
         let id = current_core_id();
-        info!("Scheduler on Core {}: Ready queue:", id);
+        info!("Scheduler {}: Ready queue:", id);
         for thread in &state.ready_queue {
             info!("  - {}", thread.id());
         }
     }
 
+    /// Debugging function to print all threads in the sleep list.
     pub fn debug_sleep_list(&self) {
+        let _state_guard = self.get_ready_state();
         let sleep_list = self.sleep_list.lock();
         let id = current_core_id();
-        info!("Scheduler on Core {}: Sleep list:", id);
+        info!("Scheduler {}: Sleep list:", id);
         for thread in sleep_list.iter() {
             info!("  - {}, {}", thread.0.id(), thread.1);
         }
