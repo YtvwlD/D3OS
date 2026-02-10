@@ -18,7 +18,7 @@ use crate::memory::vma::VmaType;
 use crate::memory::{dram, nvmem, PAGE_SIZE};
 use crate::process::thread::Thread;
 use crate::syscall::{sys_vmem, syscall_dispatcher};
-use crate::{acpi_tables, allocator, apic, boot_ap, built_info, consts, debug_cls, get_initrd_frames, init_acpi_tables, init_apic, init_cpu_info, init_gdt_for_this_core, init_initrd, init_pci, init_serial_port, init_terminal, initrd, install_gs_base, ipi, keyboard, logger, memory, network, new_core_local_storage, process_manager, scheduler, scheduler_start, serial_port, terminal, timer};
+use crate::{acpi_tables, allocator, apic, boot_ap, built_info, consts, current_core_id, get_initrd_frames, init_acpi_tables, init_apic, init_cpu_info, init_gdt_for_this_core, init_initrd, init_pci, init_serial_port, init_terminal, initrd, install_gs_base, ipi, keyboard, logger, memory, network, new_core_local_storage, process_manager, scheduler, scheduler_start, serial_port, terminal, timer};
 use crate::{efi_services_available, naming, storage};
 use alloc::format;
 use alloc::string::ToString;
@@ -40,6 +40,8 @@ use x86_64::registers::control::{Cr0, Cr0Flags, Cr3, Cr4, Cr4Flags};
 use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::paging::{PageTable, PageTableFlags, PhysFrame};
 use x86_64::{PhysAddr, VirtAddr};
+use crate::device::apic::get_cpu_count;
+use crate::process::scheduler::per_cpu_init;
 
 // import labels from linker script 'link.ld'
 unsafe extern "C" {
@@ -156,6 +158,8 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     init_acpi_tables(rsdp_addr);
 
     // Prerequisite for scheduler, apic & dispatcher (also terminal)
+    info!("Initializing per-CPU data structures: {:?}", get_cpu_count());
+    per_cpu_init(get_cpu_count(), 100);
     install_gs_base(new_core_local_storage(0, true));
 
     // Setup the GDT (Global Descriptor Table)
@@ -347,12 +351,12 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     process_manager().read().dump();
 
     // Start APIC timer & scheduler
-    info!("Starting scheduler");
+    info!("Starting scheduler{}",current_core_id());
     apic().start_timer(10);
     
-    debug_cls();
+    //debug_cls();
 
-    scheduler().ready(Thread::new_kernel_thread(boot_ap::idle_thread, "idle"));
+    scheduler().ready(Thread::new_kernel_thread(boot_ap::debug_thread, "debug"));
 
     scheduler_start()
 }
@@ -540,15 +544,16 @@ fn ap_boot_region() -> PhysFrameRange {
 }
 
 fn start_ap_processors() {
+    // install reschedule IPI handler
+    interrupt_dispatcher::install_reschedule_ipi_handler();
 
     info!("Booting AP cores");
-
     let boot_ap_start = boot_ap_start();
 
-    // Sende Init-IPI an alle APs
+    // send Init-IPI to all APs
     ipi::send_init();
 
-    // min 10s (10000) warten
+    // wait at least 10s (10000)
     timer().wait(5000);
 
     // The vector is the startup address for the boot code
