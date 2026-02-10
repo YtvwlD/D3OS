@@ -18,7 +18,7 @@
 #![no_std]
 
 use alloc::boxed::Box;
-use crate::device::apic::Apic;
+use crate::device::apic::{get_apic_id, Apic};
 use crate::device::cpu::Cpu;
 use crate::device::lfb_terminal::{CursorThread, LFBTerminal};
 use crate::device::pci::PciBus;
@@ -34,7 +34,7 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::acpi_handler::AcpiHandler;
 use crate::memory::heap::KernelAllocator;
 use crate::process::process_manager::ProcessManager;
-use crate::process::scheduler::{debugger_breakpoint_outside_lib, Scheduler};
+use crate::process::scheduler::{debugger_breakpoint_outside_lib, per_cpu_apic_id, per_cpu_ref, per_cpu_ref_curr, read_resched_flag, take_inbox_receiver, Scheduler, WorkItem};
 use crate::process::thread::Thread;
 use ::log::{Level, Log, Record, error, info};
 use acpi::AcpiTables;
@@ -48,8 +48,10 @@ use core::panic::PanicInfo;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use multiboot2::ModuleTag;
+use raw_cpuid::CpuId;
 use spin::{Mutex, Once, RwLock};
 use tar_no_std::TarArchiveRef;
+use thingbuf::mpsc::Receiver;
 use x2apic::lapic::LocalApic;
 use x86_64::{PhysAddr, VirtAddr};
 use x86_64::instructions::segmentation::{Segment, CS, DS, ES, FS, GS, SS};
@@ -219,12 +221,12 @@ pub fn idt() -> &'static Mutex<InterruptDescriptorTable> {
     &IDT
 }
 
+
 /// Core Local Storage.
 /// Contains information, which is needed by the syscall handler.
 /// The TSS address is never accessed directly, but via the swapgs instruction.
-/// 'boot.rs' sets up the gs base register with a pointer to this struct.
-/// Since multicore is implemented, we need one of these per core.
-
+/// 'boot.rs' sets up the gs base register with a pointer to this struct for the boot processor.
+/// Since multicore is implemented, we have one of these per core.
 #[repr(C)]
 pub struct CoreLocalStorage {
     self_ptr: *const CoreLocalStorage, //easy return through GS Segment with deref (with base)
@@ -232,14 +234,13 @@ pub struct CoreLocalStorage {
     user_rsp: VirtAddr,
     id: u32,
     local_apic: Mutex<LocalApic>,
-    timer_ticks_per_ms: usize,
+    timer_ticks_per_ms: usize,  // currently unused => needs new calibration method
     preempt_count: AtomicUsize,
     reschedule_pending: AtomicBool,
     scheduler: Scheduler,
-    //ready_state: Mutex<ReadyState>,
-    //sleep_list: Mutex<Vec<(Arc<Thread>, usize)>>,
     tss: Mutex<TaskStateSegment>,
     gdt: Mutex<GlobalDescriptorTable>,
+    rx: Receiver<Option<WorkItem>>,  // single owner (this core)
 }
 
 const PREEMPT_COUNT_OFFSET: usize = offset_of!(CoreLocalStorage, preempt_count);
@@ -257,33 +258,11 @@ impl CoreLocalStorage {
             preempt_count: AtomicUsize::new(0),
             reschedule_pending: AtomicBool::new(false),
             scheduler: Scheduler::new(),
-            //ready_state: Mutex::new(ReadyState::new()),
-            //sleep_list: Mutex::new(Vec::new()),
             tss: Mutex::new(TaskStateSegment::new()),
             gdt: Mutex::new(GlobalDescriptorTable::new()),
+            rx: take_inbox_receiver(id as usize),
         }
     }
-
-    /*
-    // useless now? get_ready_state is much safer
-    #[inline(always)]
-    fn ready_state(&self) -> &Mutex<ReadyState> {
-        &self.scheduler.get_ready_state();
-    }
-
-    pub fn get_ready_state(&self) -> MutexGuard<'_, ReadyState> {
-
-        // We need to make sure, that both the kernel memory manager and the ready queue are currently not locked.
-        // Otherwise, a deadlock may occur: Since we are holding the ready queue lock,
-        // the scheduler won't switch threads anymore, and none of the locks will ever be released
-        loop {
-            let state = self.ready_state.lock();
-            if allocator().is_locked() {    //allocator can be locked again, but only on other cores -> no deadlock
-                continue;
-            }
-            return state;
-        }
-    }*/
 
     #[inline(always)]
     pub fn local_apic(&self) -> &Mutex<LocalApic> {
@@ -295,22 +274,8 @@ impl CoreLocalStorage {
         self.timer_ticks_per_ms = ticks;
     }
 }
-/* old Stuff
-static CORE_LOCAL_STORAGE: Mutex<CoreLocalStorage> = Mutex::new(CoreLocalStorage::new());
 
-pub fn core_local_storage() -> &'static Mutex<CoreLocalStorage> {
-    &CORE_LOCAL_STORAGE
-}
-syscall_dispatcher Code:
-    let mut core_local_storage = core_local_storage().lock();
-    core_local_storage.tss_rsp0_ptr =
-        VirtAddr::new(ptr::from_ref(tss().lock().deref()) as u64 + size_of::<u32>() as u64);
-    KernelGsBase::write(VirtAddr::new(
-        ptr::from_ref(core_local_storage.deref()) as u64
-    ));
-*/
-
-// Returns a new CoreLocalStorage Struct with static lifetime
+/// Returns a new CoreLocalStorage Struct with static lifetime
 fn new_core_local_storage(id: u32, boot_processor: bool) -> *mut CoreLocalStorage {
     let cpu_local = Box::new(CoreLocalStorage::new(id, boot_processor));
     let addr = Box::leak(cpu_local) as *mut CoreLocalStorage;
@@ -318,10 +283,18 @@ fn new_core_local_storage(id: u32, boot_processor: bool) -> *mut CoreLocalStorag
     addr as *mut CoreLocalStorage
 }
 
-// Installs a Cpu Local Sorage on the GS segment
+/// Installs a Cpu Local Sorage on the GS segment
 fn install_gs_base(core_local_ptr: *mut CoreLocalStorage) {
     unsafe { (*core_local_ptr).self_ptr = core_local_ptr; }
     KernelGsBase::write(VirtAddr::from_ptr(core_local_ptr));
+    set_inbox_apic_id();    //sets the apic_id of the current core in the PER_CPU_SCHED Array
+}
+
+// Called only once by each owner core during startup to set the PER_CPU_SCHED apic_id
+fn set_inbox_apic_id() {
+    let curr_id = current_core_id() as usize;
+    let apic_id = get_apic_id();
+    per_cpu_ref(curr_id).apic_id.store(apic_id, Ordering::Release);
 }
 
 #[inline(always)]
@@ -362,7 +335,7 @@ pub fn preempt_enable() {
     let prev = cls().preempt_count.fetch_sub(1, Ordering::SeqCst);
     debug_assert!(prev > 0);
     // drain possible pending reschedule
-    if prev == 1 && cls().reschedule_pending.swap(false, Ordering::SeqCst) {
+    if prev == 1 && read_resched_flag() {
         scheduler().switch_thread_no_interrupt();
     }
 }

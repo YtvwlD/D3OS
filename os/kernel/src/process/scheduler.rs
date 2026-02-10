@@ -433,6 +433,7 @@ impl Scheduler {
             let mut sleep_list = self.sleep_list.lock();
             while next_thread.is_none() {
                 Scheduler::check_sleep_list(state, &mut sleep_list);
+                state = self.drain_inbox_into_ready(10, state);
                 next_thread = state.ready_queue.pop_back();
             }
         }
@@ -461,27 +462,26 @@ impl Scheduler {
     fn switch_thread(&self, interrupt: bool) {
         if let Some(mut state) = self.ready_state.try_lock() {
             if !state.initialized {
-                if interrupt {
-                    apic().end_of_interrupt();
-                }
+                if interrupt { apic().end_of_interrupt(); }
                 return;
             }
 
-            if interrupt {
-                if preempt_is_disabled() {
-                    request_reschedule();
-                    apic().end_of_interrupt();
-                    return;
-                }
-            }
-            else {
-                if preempt_is_disabled() {
-                    return;
-                }
+            // If preempt_is_disabled() is true, we are in an interrupt handler,
+            // and we should not switch threads to protect core safety.
+            if preempt_is_disabled() {
+                if interrupt { apic().end_of_interrupt(); }
+                return;
             }
 
+            // Check for new threads in the sleep list and inbox
             if let Some(mut sleep_list) = self.sleep_list.try_lock() {
                 Scheduler::check_sleep_list(&mut state, &mut sleep_list);
+            }
+            state = self.drain_inbox_into_ready(10, state);
+
+            // Check if this core has too many threads running
+            if self.should_balance_now() {
+                state = self.balance_once(state);
             }
 
             // Get clone of the current thread
@@ -524,6 +524,73 @@ impl Scheduler {
                 apic().end_of_interrupt();
             }
         }
+    }
+
+    /// Checks whether the current core should balance its threads.
+    /// returns own_threads > (nbr_threads /nbr_cpus +1)
+    fn should_balance_now(&self) -> bool {
+        let nbr_threads = self.active_thread_count() as u32;
+        let own_threads = read_rq_len() as u32;
+        let nbr_cpus = ACTIVE_CPUS.load(Relaxed);
+        /*info!("Scheduler{}: total_threads: {}, own_threads: {}, cpus: {}",
+            current_core_id(), nbr_threads, own_threads, nbr_cpus);*/
+        if own_threads > (nbr_threads /nbr_cpus +1){
+            info!("Scheduler{}: total_threads: {}, own_threads: {}, cpus: {}",
+                current_core_id(), nbr_threads, own_threads, nbr_cpus);
+            return true }
+        false
+    }
+
+    /// Balances the threads on the current core by moving one thread from the tail to the target core.
+    /// Target core is the core with the least number of threads.
+    /// Returns the new state of the scheduler. (needed for mutable access)
+    fn balance_once<'a>(&'a self, mut state: MutexGuard<'a, ReadyState>) -> MutexGuard<'a, ReadyState> {
+        let own_load = read_rq_len() as usize;
+        if own_load <= 1 {
+            panic!("Scheduler: Cannot balance, current load ({:?}) is too low!", own_load);
+        }
+
+        if let Some((target_core, target_load)) = self.find_less_loaded_core() {
+            if own_load >= target_load + 2 {
+                let amount = ((own_load-target_load)/4)+1;
+                for _ in 0..amount {
+                    // Move one thread from the tail to the target
+                    let (thread_opt, old_state) = self.pop_last(state);
+                    state = old_state;
+                    if let Some(thread) = thread_opt {
+                        let tid = thread.id();
+                        let w = WorkItem::new(thread);
+                        dec_rq_len();
+                        if let Ok(r) = schedule_on(target_core, w) {
+                            info!(" Scheduler{}: Scheduled thread {} on core {}", current_core_id(), tid, target_core);
+                        }
+                    }
+                }
+            }
+        }
+        state
+    }
+
+    /// Finds the core with the least number of threads.
+    /// returns (target_core, target_load)
+    fn find_less_loaded_core(&self) -> Option<(usize, usize)> {
+        // Inspect per-core exported metrics
+        let mut curr: usize = 0;
+        let mut min = read_rq_len_remote(0);
+        for i in 1..ACTIVE_CPUS.load(Relaxed) as usize {
+            if min > read_rq_len_remote(i) {
+                min = read_rq_len_remote(i);
+                curr = i;
+            };
+        }
+        let own = read_rq_len();
+        if min >= own { panic!("Scheduler: Cannot find less_loaded_core, current min ({:?}) is too low!",min); }
+        Some((curr, min as usize))
+    }
+
+    /// Pops the last inserted thread from the ready queue.
+    fn pop_last<'a>(&'a self, mut state: MutexGuard<'a,ReadyState>) -> (Option<Arc<Thread>>, MutexGuard<'a,ReadyState>) {
+        (state.ready_queue.pop_front(), state)
     }
 
     /// Return current running thread
@@ -587,6 +654,33 @@ impl Scheduler {
                 self.switch_thread_no_interrupt();
             }
         }
+    }
+
+    /// drains the inbox from the cls into the ready queue; 10 items max per call
+    /// automatically calls inc_rq_len()
+    pub fn drain_inbox_into_ready<'a>(&self, max: usize, mut state: MutexGuard<'a, ReadyState>) -> MutexGuard<'a, ReadyState> {
+        let mut drained = 0usize;
+        for _ in 0..max {
+            match cls().rx.try_recv() {
+                Ok(Some(item)) => {
+                    let tid = item.thread.id();
+                    state.ready_queue.push_front(item.thread);
+                    inc_rq_len();
+                    drained += 1;
+                    log::trace!("cpu{}: drained thread {} into ready_queue (rq_len now ~inc)", crate::current_core_id(), tid);
+                }
+                Ok(None) => {
+                    log::error!("cpu{}: inbox returned None (unexpected)", current_core_id());
+                    break;
+                }
+                Err(_) => break,
+            }
+        }
+        if drained > 0 {
+            clear_resched_flag();
+            log::debug!("cpu{}: drained {} thread(s) into ready_queue", current_core_id(), drained);
+        }
+        state
     }
 }
 
