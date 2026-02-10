@@ -459,16 +459,21 @@ fn debug_cls() {
     let tss_rsp0 = cls.tss_rsp0_ptr;
     let user_rsp = cls.user_rsp;
     let id = cls.id;
-    let local_apic = cls.local_apic();
     let timer_ticks_per_ms = cls.timer_ticks_per_ms;
 
-    info!("Local Struct at adress: {:p}\
-        \n\t TSS_rsp0: {:p} \n\t user_rsp: {:p} \n\t Core-Id: {}\
-        \n\t Local APIC: {:?} \n\t Timer Ticks per ms: {}\n\t",
-        cls_ptr(), tss_rsp0, user_rsp, id, local_apic, timer_ticks_per_ms);
-
-    cls.scheduler.debug_ready_queue();
-    cls.scheduler.debug_sleep_list();
+    if let Some(feat) = CpuId::new().get_feature_info() {
+        let has_tsc = feat.has_tsc();
+        let has_apic = feat.has_apic();
+        let apic_id = feat.initial_local_apic_id();
+        info!("\tNew Core {} going online:\n\tTSC: {}    APIC: {}    APIC-id: {}    \
+            Ticks/ms: {}\n\tCLS_addr: {:p}    TSS_rsp0: {:p}    user_rsp: {:p}",
+        id, has_tsc, has_apic, apic_id, timer_ticks_per_ms, cls_ptr(), tss_rsp0, user_rsp);
+        info!(" Cpu ID should be {} and cpuLocal says {}", id, current_core_id());
+        info!(" APIC ID should be {} and PER_CPU says {}", apic_id, per_cpu_ref_curr().apic_id.load(Ordering::Acquire));
+        info!(" translateCpuToApic: {} and translate says {}", id, per_cpu_apic_id(id as usize));
+    }
+    //info!("\t Local APIC:", local_apic.lock().deref());
+    //cls.scheduler.debug_scheduler();
 }
 
 /// ACPI Tables.
