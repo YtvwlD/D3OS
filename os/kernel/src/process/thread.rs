@@ -42,7 +42,7 @@ use crate::memory::PAGE_SIZE;
 use crate::process::process::Process;
 use crate::process::scheduler;
 use crate::syscall::syscall_dispatcher::CORE_LOCAL_STORAGE_TSS_RSP0_PTR_INDEX;
-use crate::{process_manager, scheduler, tss};
+use crate::{process_manager, scheduler};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::arch::naked_asm;
@@ -55,6 +55,7 @@ use x86_64::PrivilegeLevel::Ring3;
 use x86_64::VirtAddr;
 use x86_64::structures::gdt::SegmentSelector;
 use x86_64::structures::paging::Page;
+use crate::process::core_local_storage::tss;
 
 /// kernel & user stack of a thread
 struct Stacks {

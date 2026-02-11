@@ -24,9 +24,8 @@
    ║ Author: Fabian Ruhland, 05.09.2025, HHU                                 ║
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
-use alloc::boxed::Box;
 use crate::process::thread::Thread;
-use crate::{allocator, apic, cls, current_core_id, preempt_is_disabled, scheduler, timer, tss};
+use crate::{allocator, apic, cls, per_cpu_ref, timer};
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -35,13 +34,14 @@ use core::arch::asm;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::sync::atomic::AtomicU32;
 use core::sync::atomic::Ordering::{Relaxed};
-use log::{info, log};
+use log::{info};
 use smallmap::Map;
-use spin::{Mutex, MutexGuard, Once};
-use thingbuf::mpsc;
-use thingbuf::mpsc::{Receiver, Sender};
+use spin::{Mutex, MutexGuard};
+use thingbuf::mpsc::{Sender};
+use crate::device::apic::get_apic_id;
 use crate::device::cpu::{disable_int_nested, enable_int_nested};
 use crate::ipi::send_fixed_to_apic;
+use crate::process::core_local_storage::{current_core_id, preempt_is_disabled, scheduler, tss};
 
 // thread IDs
 pub static THREAD_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -708,13 +708,18 @@ impl Scheduler {
 
 /// Helper struct to store shared public information of a core
 #[repr(align(64))]
-pub struct PerCpuSched {
+pub struct PerCpuRef {
     // Approximate runqueue length (owner updates, others read)
-    pub rq_len: AtomicU32,
-    pub resched_flag: AtomicBool,
-    pub tx: Sender<Option<WorkItem>>,    // producers (remote cores)
-    pub apic_id: AtomicUsize,
+    rq_len: AtomicU32,
+    resched_flag: AtomicBool,
+    tx: Sender<Option<WorkItem>>,    // producers (remote cores)
+    apic_id: AtomicUsize,
 }
+unsafe impl Sync for PerCpuRef {}
+impl PerCpuRef { pub fn new(tx: Sender<Option<WorkItem>>) -> Self {
+    Self { rq_len: AtomicU32::new(0), resched_flag: AtomicBool::new(false),
+        tx, apic_id: AtomicUsize::new(0) } } }
+
 
 /// Wrapper struct to store a thread and possible future meta data
 #[derive(Clone)]
@@ -722,41 +727,12 @@ pub struct WorkItem { pub thread: Arc<Thread>, }
 
 impl WorkItem { pub fn new(thread: Arc<Thread>) -> Self { Self { thread } } }
 
-// Global table indexed by core_id
-static PER_CPU_SCHED: Once<&'static [PerCpuSched]> = Once::new();
-
-static PER_CPU_RX: Once<&'static [Mutex<Option<Receiver<Option<WorkItem>>>>]> = Once::new();
-
-unsafe impl Sync for PerCpuSched {}
-
-/// Called only once by the boot processor core during startup to initialize the global tables
-pub fn per_cpu_init(cpu_count: usize, capacity: usize) {
-    let mut publics = Vec::with_capacity(cpu_count);
-    let mut receivers = Vec::with_capacity(cpu_count);
-
-    for _ in 0..cpu_count {
-        let (tx, rx) = mpsc::channel::<Option<WorkItem>>(capacity);
-        publics.push(PerCpuSched {
-            rq_len: AtomicU32::new(0),
-            resched_flag: AtomicBool::new(false),
-            tx,
-            apic_id: AtomicUsize::new(0),
-        });
-        receivers.push(Mutex::new(Some(rx)));
-    }
-
-    let leaked_cpu_slice: &'static [PerCpuSched] = Box::leak(publics.into_boxed_slice());
-    PER_CPU_SCHED.call_once(|| leaked_cpu_slice);
-    let leaked_receiver_slice: &'static [Mutex<Option<Receiver<Option<WorkItem>>>>]
-        = Box::leak(receivers.into_boxed_slice());
-    PER_CPU_RX.call_once(|| leaked_receiver_slice);
-}
-
-/// Called only once by each owner core during startup to move the RX into its CLS
-pub fn take_inbox_receiver(id: usize) -> Receiver<Option<WorkItem>> {
-    let bank = PER_CPU_RX.get().expect("per_cpu_init not called");
-    let mut guard = bank[id].lock();
-    guard.take().expect("Receiver already taken")
+/// Called only once by each owner core during startup to set the PER_CPU_SCHED apic_id
+pub fn set_inbox_apic_id(id: usize) {
+    let curr_id = id;
+    let apic_id = get_apic_id();
+    info!("Setting inbox{} apic_id to {}", curr_id, apic_id);
+    per_cpu_ref(curr_id).apic_id.store(apic_id, Ordering::Release);
 }
 
 /// Returns the apic_id of the core with the given id
@@ -764,16 +740,9 @@ pub fn per_cpu_apic_id(cpu_id: usize) -> usize {
     per_cpu_ref(cpu_id).apic_id.load(Ordering::Acquire)
 }
 
-/// Returns a reference to the PerCpuSched struct of the core with the given id
-#[inline]
-pub fn per_cpu_ref(id: usize) -> &'static PerCpuSched {
-    let slice = PER_CPU_SCHED.get().expect("per_cpu_init not called");
-    &slice[id]
-}
-
 /// Returns a reference to the PerCpuSched struct of the current core
 #[inline]
-pub fn per_cpu_ref_curr() -> &'static PerCpuSched {
+pub fn per_cpu_ref_curr() -> &'static PerCpuRef {
     per_cpu_ref(current_core_id() as usize)
 }
 

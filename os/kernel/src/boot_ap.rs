@@ -1,8 +1,7 @@
-use core::any::Any;
 use log::info;
-use crate::{apic, cls, current_core_id, debug_cls, init_gdt_for_this_core, install_gs_base, new_core_local_storage, per_cpu_ref_curr, scheduler, scheduler_start, set_inbox_apic_id, timer, per_cpu_apic_id, WorkItem, APIC, PREEMPT_COUNT_OFFSET};
-use raw_cpuid::CpuId;
+use crate::{apic, cls, scheduler, WorkItem, APIC};
 use crate::device::apic::Apic;
+use crate::process::core_local_storage::{current_core_id, init_gdt_for_this_core, install_gs_base, scheduler_start};
 use crate::process::scheduler;
 use crate::process::scheduler::{read_rq_len, schedule_on};
 use crate::process::thread::Thread;
@@ -17,7 +16,7 @@ pub extern "C" fn startup_ap(cpu_id: u32) {
     //timer().wait(1000);
 
     // installs the cpu_id in a cpuLocal struct on the GS segment
-    install_gs_base(new_core_local_storage(cpu_id, false));
+    install_gs_base(cpu_id, false);
     init_gdt_for_this_core();
     syscall_dispatcher::init();
     scheduler::cpu_mark_online();

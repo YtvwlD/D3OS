@@ -13,7 +13,8 @@ use core::ptr::slice_from_raw_parts;
 use core::str::from_utf8;
 use x86_64::VirtAddr;
 use syscall::return_vals::Errno;
-use crate::{current_core_id, initrd, process_manager, scheduler};
+use crate::{initrd, process_manager, scheduler};
+use crate::process::core_local_storage::current_core_id;
 use crate::process::scheduler;
 use crate::process::thread::Thread;
 

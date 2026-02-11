@@ -19,9 +19,9 @@ use crate::syscall::sys_concurrent::{sys_core_id, sys_process_execute_binary, sy
 use crate::syscall::sys_terminal::{sys_terminal_read, sys_terminal_read_nb, sys_terminal_write};
 use crate::syscall::sys_naming::*;
 
-use crate::{init_tss_cls};
 use log::info;
 use x86_64::registers::rflags::RFlags;
+use crate::process::core_local_storage::init_tss_cls;
 
 pub const CORE_LOCAL_STORAGE_TSS_RSP0_PTR_INDEX: u64 = 0x08;    //2nd pointer in struct
 pub const CORE_LOCAL_STORAGE_USER_RSP_INDEX: u64 = 0x10;        //3rd pointer in struct

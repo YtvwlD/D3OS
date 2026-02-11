@@ -1,7 +1,7 @@
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::memory::vma::VmaType;
-use crate::{acpi_tables, allocator, apic, cls, cls_mut, current_core_id, interrupt_dispatcher, process_manager, scheduler, timer};
+use crate::{acpi_tables, allocator, apic, cls, cls_mut, interrupt_dispatcher, process_manager, scheduler, timer};
 use acpi::InterruptModel;
 use acpi::madt::Madt;
 use acpi::platform::interrupt::{InterruptSourceOverride, NmiSource, Polarity, TriggerMode};
@@ -15,6 +15,7 @@ use uefi::boot::PAGE_SIZE;
 use x2apic::ioapic::{IoApic, IrqFlags, IrqMode, RedirectionTableEntry};
 use x2apic::lapic::{LocalApic, LocalApicBuilder, TimerDivide, TimerMode};
 use x86_64::structures::paging::PageTableFlags;
+use crate::process::core_local_storage::current_core_id;
 
 pub struct Apic {
     //local_apic: Mutex<LocalApic>,
@@ -390,7 +391,7 @@ impl Apic {
         unsafe {
             local_apic.set_timer_divide(TimerDivide::Div1);
             local_apic.set_timer_mode(TimerMode::Periodic);
-            local_apic.set_timer_initial((cls().timer_ticks_per_ms * interval_ms) as u32);
+            local_apic.set_timer_initial((cls().timer_ticks_per_ms() * interval_ms) as u32);
             local_apic.enable_timer();
         }
 

@@ -18,7 +18,7 @@ use crate::memory::vma::VmaType;
 use crate::memory::{dram, nvmem, PAGE_SIZE};
 use crate::process::thread::Thread;
 use crate::syscall::{sys_vmem, syscall_dispatcher};
-use crate::{acpi_tables, allocator, apic, boot_ap, built_info, consts, current_core_id, get_initrd_frames, init_acpi_tables, init_apic, init_cpu_info, init_gdt_for_this_core, init_initrd, init_pci, init_serial_port, init_terminal, initrd, install_gs_base, ipi, keyboard, logger, memory, network, new_core_local_storage, process_manager, scheduler, scheduler_start, serial_port, terminal, timer};
+use crate::{acpi_tables, allocator, apic, boot_ap, built_info, consts, get_initrd_frames, init_acpi_tables, init_apic, init_cpu_info, init_initrd, init_pci, init_serial_port, init_terminal, initrd, ipi, keyboard, logger, memory, network, per_cpu_init, process_manager, scheduler, serial_port, terminal, timer};
 use crate::{efi_services_available, naming, storage};
 use alloc::format;
 use alloc::string::ToString;
@@ -41,7 +41,7 @@ use x86_64::structures::paging::frame::PhysFrameRange;
 use x86_64::structures::paging::{PageTable, PageTableFlags, PhysFrame};
 use x86_64::{PhysAddr, VirtAddr};
 use crate::device::apic::get_cpu_count;
-use crate::process::scheduler::per_cpu_init;
+use crate::process::core_local_storage::{current_core_id, init_gdt_for_this_core, install_gs_base, scheduler_start};
 
 // import labels from linker script 'link.ld'
 unsafe extern "C" {
@@ -160,7 +160,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     // Prerequisite for scheduler, apic & dispatcher (also terminal)
     info!("Initializing per-CPU data structures: {:?}", get_cpu_count());
     per_cpu_init(get_cpu_count(), 100);
-    install_gs_base(new_core_local_storage(0, true));
+    install_gs_base(0, true);
 
     // Setup the GDT (Global Descriptor Table)
     // Has to be done after EFI boot services have been exited, since they rely on their own GDT
