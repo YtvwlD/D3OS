@@ -236,7 +236,6 @@ pub struct CoreLocalStorage {
     local_apic: Mutex<LocalApic>,
     timer_ticks_per_ms: usize,  // currently unused => needs new calibration method
     preempt_count: AtomicUsize,
-    reschedule_pending: AtomicBool,
     scheduler: Scheduler,
     tss: Mutex<TaskStateSegment>,
     gdt: Mutex<GlobalDescriptorTable>,
@@ -244,7 +243,6 @@ pub struct CoreLocalStorage {
 }
 
 const PREEMPT_COUNT_OFFSET: usize = offset_of!(CoreLocalStorage, preempt_count);
-const RESCHED_PENDING_OFFSET: usize = offset_of!(CoreLocalStorage, reschedule_pending);
 
 impl CoreLocalStorage {
     pub fn new(id: u32, kernel_core: bool) -> Self {
@@ -256,7 +254,6 @@ impl CoreLocalStorage {
             local_apic: Apic::new_local_apic(kernel_core),
             timer_ticks_per_ms: 0,
             preempt_count: AtomicUsize::new(0),
-            reschedule_pending: AtomicBool::new(false),
             scheduler: Scheduler::new(),
             tss: Mutex::new(TaskStateSegment::new()),
             gdt: Mutex::new(GlobalDescriptorTable::new()),
@@ -315,18 +312,15 @@ fn preempt_disable_no_swap() {
 fn preempt_enable_no_swap() {
     let base = read_kernel_gs_base() as *mut u8;
     let prev_counter;
-    let reschedule_pending;
     unsafe {
         let cnt_ptr = base.add(PREEMPT_COUNT_OFFSET) as *mut AtomicUsize;
-        let bool_ptr = base.add(RESCHED_PENDING_OFFSET) as *mut AtomicBool;
         prev_counter = (*cnt_ptr).fetch_sub(1, Ordering::SeqCst);
-        reschedule_pending = (*bool_ptr).swap(false, Ordering::SeqCst);
     }
     debug_assert!(prev_counter > 0);
     // drain possible pending reschedule
-        if prev_counter == 1 && reschedule_pending {
-            scheduler().switch_thread_no_interrupt();
-        }
+    if prev_counter == 1 && read_resched_flag() {
+        scheduler().switch_thread_no_interrupt();
+    }
 }
 
 
@@ -343,11 +337,6 @@ pub fn preempt_enable() {
 #[inline(always)]
 pub fn preempt_is_disabled() -> bool {
     cls().preempt_count.load(Ordering::SeqCst) != 0
-}
-
-#[inline(always)]
-pub fn request_reschedule() {
-    cls().reschedule_pending.store(true, Ordering::SeqCst);
 }
 
 #[inline(always)]

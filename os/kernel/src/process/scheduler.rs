@@ -26,7 +26,7 @@
 */
 use alloc::boxed::Box;
 use crate::process::thread::Thread;
-use crate::{allocator, apic, cls, current_core_id, preempt_is_disabled, request_reschedule, scheduler, timer, tss};
+use crate::{allocator, apic, cls, current_core_id, preempt_is_disabled, scheduler, timer, tss};
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
