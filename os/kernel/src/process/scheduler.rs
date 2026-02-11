@@ -234,7 +234,7 @@ impl Scheduler {
 
     /// Put calling thread to sleep for `ms` milliseconds
     pub fn sleep(&self, ms: usize) {
-        let mut state = self.get_ready_state();
+        let state = self.get_ready_state();
 
         if !state.initialized {
             // Scheduler is not initialized yet, so this function has been called during the boot process
@@ -259,7 +259,7 @@ impl Scheduler {
 
     /// Put calling thread to block
     pub fn block(&self) {
-        let mut state = self.get_ready_state();
+        let state = self.get_ready_state();
 
         if !state.initialized {
             // Scheduler is not initialized yet, so this function has been called during the boot process
@@ -303,7 +303,7 @@ impl Scheduler {
 
     /// Calling thread will block until thread with `thread_id` has terminated
     pub fn join(&self, thread_id: usize) {
-        let mut state = self.get_ready_state();
+        let state = self.get_ready_state();
         let thread = Scheduler::current(&state);
 
         {
@@ -580,7 +580,7 @@ impl Scheduler {
                         let tid = thread.id();
                         let w = WorkItem::new(thread);
                         dec_rq_len();
-                        if let Ok(r) = schedule_on(target_core, w) {
+                        if let Ok(_r) = schedule_on(target_core, w) {
                             info!(" Scheduler{}: Scheduled thread {} on core {}", current_core_id(), tid, target_core);
                         }
                     }
@@ -803,13 +803,11 @@ fn send_reschedule_ipi(target_id: usize) {
 /// Owner function to increase the runqueue length of the current core.
 pub fn inc_rq_len() {
     let id = current_core_id() as usize;
-    //info!("rq increased by 1 on core {}:",id);
     per_cpu_ref(id).rq_len.fetch_add(1, Ordering::Relaxed);
 }
 /// Owner function to decrease the runqueue length of the current core.
 pub fn dec_rq_len() {
     let id = current_core_id() as usize;
-    //info!("rq decreased by 1 on core {}:",id);
     per_cpu_ref(id).rq_len.fetch_sub(1, Ordering::Release); // Release for stronger publication before donating
 }
 /// Owner function to read the runqueue length of the current core.

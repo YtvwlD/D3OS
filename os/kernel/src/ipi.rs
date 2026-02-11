@@ -216,8 +216,7 @@ pub fn send_startup(vector: u8) {
 
 /// Sends a Fixed IPI to a specific physical APIC ID with the given vector.
 pub fn send_fixed_to_apic(apic_id: usize, vector: u8) {
-	let mut icr = InterruptCommand::new();
-	icr = read_icr_register();
+	let mut icr = read_icr_register();
 
 	const DEST_SHORTHAND_NONE: u8 = 0;
 
