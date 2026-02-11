@@ -438,7 +438,7 @@ impl Scheduler {
             let mut sleep_list = self.sleep_list.lock();
             if next_thread.is_none() {
                 Scheduler::check_sleep_list(&mut state, &mut sleep_list);
-                state = self.drain_inbox_into_ready(10, state);
+                state = drain_inbox_into_ready(10, state);
                 next_thread = state.ready_queue.pop_back();
                 if next_thread.is_none() {  //still no new thread => switch to idle
                     next_thread = Some(Arc::clone(&state.idle_thread));
@@ -486,7 +486,7 @@ impl Scheduler {
             if let Some(mut sleep_list) = self.sleep_list.try_lock() {
                 Scheduler::check_sleep_list(&mut state, &mut sleep_list);
             }
-            state = self.drain_inbox_into_ready(10, state);
+            state = drain_inbox_into_ready(10, state);
 
             // Check if this core has too many threads running
             if self.should_balance_now() {
@@ -674,33 +674,6 @@ impl Scheduler {
             }
         }
     }
-
-    /// drains the inbox from the cls into the ready queue; 10 items max per call
-    /// automatically calls inc_rq_len()
-    pub fn drain_inbox_into_ready<'a>(&self, max: usize, mut state: MutexGuard<'a, ReadyState>) -> MutexGuard<'a, ReadyState> {
-        let mut drained = 0usize;
-        for _ in 0..max {
-            match cls().rx.try_recv() {
-                Ok(Some(item)) => {
-                    let tid = item.thread.id();
-                    state.ready_queue.push_front(item.thread);
-                    inc_rq_len();
-                    drained += 1;
-                    log::trace!("cpu{}: drained thread {} into ready_queue (rq_len now ~inc)", crate::current_core_id(), tid);
-                }
-                Ok(None) => {
-                    log::error!("cpu{}: inbox returned None (unexpected)", current_core_id());
-                    break;
-                }
-                Err(_) => break,
-            }
-        }
-        if drained > 0 {
-            clear_resched_flag();
-            log::debug!("cpu{}: drained {} thread(s) into ready_queue", current_core_id(), drained);
-        }
-        state
-    }
 }
 
 
@@ -763,6 +736,33 @@ pub fn schedule_on(target_id: usize, item: WorkItem) -> Result<(), WorkItem> {
         }
         Err(e) => Err(e.into_inner().unwrap()), // unwrap: we sent Some(_)
     }
+}
+
+/// drains the inbox from the cls into the ready queue; 10 items max per call
+/// automatically calls inc_rq_len()
+pub fn drain_inbox_into_ready(max: usize, mut state: MutexGuard<ReadyState>) -> MutexGuard<ReadyState> {
+    let mut drained = 0usize;
+    for _ in 0..max {
+        match cls().try_recv() {
+            Ok(Some(item)) => {
+                let tid = item.thread.id();
+                state.ready_queue.push_front(item.thread);
+                inc_rq_len();
+                drained += 1;
+                log::trace!("cpu{}: drained thread {} into ready_queue (rq_len now ~inc)", current_core_id(), tid);
+            }
+            Ok(None) => {
+                log::error!("cpu{}: inbox returned None (unexpected)", current_core_id());
+                break;
+            }
+            Err(_) => break,
+        }
+    }
+    if drained > 0 {
+        clear_resched_flag();
+        log::debug!("cpu{}: drained {} thread(s) into ready_queue", current_core_id(), drained);
+    }
+    state
 }
 
 /// Sends a Reschedule IPI to wake the core with the given id up, if it was idle.
