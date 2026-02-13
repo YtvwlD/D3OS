@@ -50,10 +50,15 @@ impl NetworkInterface {
         Self { device, interface: RwLock::new(interface), sockets }
     }
     
-    fn poll(&self) {
+    fn poll(&self) -> iface::PollResult {
         let time = Instant::from_millis(timer().systime_ms() as i64);
-        // TODO: this might become a deadlock
-        self.device.poll(self.interface.write().deref_mut(), self.sockets.write().deref_mut(), time);
+        // try to get both locks, else we might get a deadlock
+        if let Some(mut interface) = self.interface.try_write()
+            && let Some(mut sockets) = self.sockets.try_write() {
+            self.device.poll(interface.deref_mut(), sockets.deref_mut(), time)
+        } else {
+            iface::PollResult::None
+        }
     }
 }
 
@@ -111,7 +116,7 @@ struct PerProcessSocketSet {
 
 impl PerProcessSocketSet {
     /// Insert these interface-handle-pairs, returning a new ID.
-    fn insert(&mut self, interface_handle: Vec<(String, SocketHandle)>) -> SocketId {
+    fn insert(&mut self, interface_handle: Vec<(Arc<NetworkInterface>, SocketHandle)>) -> SocketId {
         let id = SocketId(self.counter.fetch_add(1, Ordering::SeqCst));
         self.sockets.try_insert(id, interface_handle)
             .expect("failed to insert socket in per-process socket set");
@@ -148,38 +153,38 @@ pub fn init() {
         let interface = Interface::new(conf, device, Instant::from_millis(time as i64));        
         
         let index = ETHERNET_COUNT.fetch_add(1, Ordering::SeqCst);
-        INTERFACES.write().try_insert(format!("eth{index}"), NetworkInterface::new(
+        INTERFACES.write().try_insert(format!("eth{index}"), Arc::new(NetworkInterface::new(
             NetworkDevice::Rtl8139(rtl8139), interface,
-        )).expect("network interface does already exist");
+        ))).expect("network interface does already exist");
     }
 
     // Add DHCP and DNS on the first ethernet interface if we have one.
-    if let Some((name, mut interface)) = INTERFACES
+    if let Some((_name, interface)) = INTERFACES
         .read()
         .iter()
-        .filter(|(name, interface)| !matches!(interface.read().device, NetworkDevice::Loopback(_)))
-        .next()
-        .map(|(name, interface)| (name, interface.write())) {
-        let current_process = process_manager().read().current_process();
+        .filter(|(_name, interface)| !matches!(interface.device, NetworkDevice::Loopback(_)))
+        .next() {
+        let pid = process_manager().read().current_process().id;
         let mut socket_process = SOCKET_PROCESS
             .write();
         let mut process_map = socket_process
-            .try_insert(current_process.id, RwLock::default())
+            .try_insert(pid, RwLock::default())
             .expect("failed to create socket set for kernel process")
             .write();
+        let mut sockets = interface.sockets.write();
         // setup DNS
         DNS_SOCKET.call_once(|| {
             let dns_socket = dns::Socket::new(&[], Vec::new());
-            let dns_handle = interface.sockets.add(dns_socket);
+            let dns_handle = sockets.add(dns_socket);
             process_map
-                .insert(vec![(name.clone(), dns_handle)])
+                .insert(vec![(interface.clone(), dns_handle)])
         });
         // request an IP address via DHCP
         DHCP_SOCKET.call_once(|| {
             let dhcp_socket = dhcpv4::Socket::new();
-            let dhcp_handle = interface.sockets.add(dhcp_socket);
+            let dhcp_handle = sockets.add(dhcp_socket);
             process_map
-                .insert(vec![(name.clone(), dhcp_handle)])
+                .insert(vec![(interface.clone(), dhcp_handle)])
         });
     }
     
@@ -548,51 +553,47 @@ fn poll_sockets() -> () {
     // DHCP handling is based on https://github.com/smoltcp-rs/smoltcp/blob/main/examples/dhcp_client.rs
     // This code assumes that DHCP and DNS are on the same single interface.
     let dhcp_id = DHCP_SOCKET.get().expect("DHCP socket does not exist yet");
-    let current_process = process_manager().read().current_process();
+    let pid = process_manager().read().current_process().id;
     let socket_process = SOCKET_PROCESS
         .read();
     let process_sockets = socket_process
-        .get(&current_process.id)
+        .get(&pid)
         .expect("failed to get socket set for kernel process")
         .write();
     let interfaces = INTERFACES
         .read();
-    let (dhcp_interface_name, dhcp_handle) = process_sockets.sockets
+    let (dhcp_interface, dhcp_handle) = process_sockets.sockets
         .get(dhcp_id)
         .expect("failed to get DHCP sockets")
         .iter().next()
         .expect("failed to get DHCP socket");
-    let dhcp_interface = interfaces
-        .get(dhcp_interface_name)
-        .expect("failed to get DHCP interface");
-    let mut dhcp_write = dhcp_interface.sockets.write();
-    let dhcp_socket = dhcp_write.get_mut::<dhcpv4::Socket>(*dhcp_handle);
+    let mut sockets_write = dhcp_interface.sockets.write();
+    let dhcp_socket = sockets_write.get_mut::<dhcpv4::Socket>(*dhcp_handle);
+    let mut interface_write = dhcp_interface.interface.write();
     if let Some(event) = dhcp_socket.poll() {
         match event {
             dhcpv4::Event::Deconfigured => {
                 info!("lost DHCP lease");
-                let mut write = dhcp_interface.interface.write();
-                write.update_ip_addrs(|addrs| addrs.clear());
-                write.routes_mut().remove_default_ipv4_route();
+                interface_write.update_ip_addrs(|addrs| addrs.clear());
+                interface_write.routes_mut().remove_default_ipv4_route();
             },
             dhcpv4::Event::Configured(config) => {
                 info!("acquired DHCP lease:");
                 info!("IP address: {}", config.address);
-                let mut write = dhcp_interface.interface.write();
-                write.update_ip_addrs(|addrs| {
+                interface_write.update_ip_addrs(|addrs| {
                     addrs.clear();
                     addrs.push(IpCidr::Ipv4(config.address)).unwrap();
                 });
 
                 if let Some(router) = config.router {
                     info!("default gateway: {router}");
-                    write
+                    interface_write
                         .routes_mut()
                         .add_default_ipv4_route(router)
                         .unwrap();
                 } else {
                     info!("no default gateway");
-                    write
+                    interface_write
                         .routes_mut()
                         .remove_default_ipv4_route();
                 }
@@ -607,8 +608,7 @@ fn poll_sockets() -> () {
                     .expect("failed to get DNS sockets")
                     .iter().next()
                     .expect("failed to get DNS socket");
-                let mut dns_write = dhcp_interface.sockets.write();
-                let dns_socket = dns_write.get_mut::<dns::Socket>(*dns_handle);
+                let dns_socket = sockets_write.get_mut::<dns::Socket>(*dns_handle);
                 dns_socket.update_servers(&dns_servers);
             },
         }
