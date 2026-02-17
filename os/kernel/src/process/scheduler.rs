@@ -485,7 +485,7 @@ impl Scheduler {
             state = drain_inbox_into_ready(10, state);
 
             // Check if this core has too many threads running
-            if self.should_balance_now() {
+            if read_resched_flag() || self.should_balance_now() {
                 state = self.balance_once(state);
             }
 
@@ -561,6 +561,7 @@ impl Scheduler {
         let own_load = read_rq_len() as usize;
         if own_load <= 1 {
             //debug!("Scheduler: Cannot balance, current load ({:?}) is too low!", own_load);
+            return state;
         }
 
         if let Some((target_core, target_load)) = self.find_less_loaded_core() {
@@ -599,6 +600,33 @@ impl Scheduler {
         let own = read_rq_len();
         if min >= own { panic!("Scheduler: Cannot find less_loaded_core, current min ({:?}) is too low!",min); }
         Some((curr, min as usize))
+    }
+
+    /// Finds the core with the most number of threads.
+    /// returns the target's Core Id
+    fn find_more_loaded_core(&self) -> Option<usize> {
+        // Inspect per-core exported metrics
+        let mut curr: usize = 0;
+        let mut max = read_rq_len_remote(0);
+        for i in 1..ACTIVE_CPUS.load(Relaxed) as usize {
+            if max < read_rq_len_remote(i) {
+                max = read_rq_len_remote(i);
+                curr = i;
+            };
+        }
+        let own = read_rq_len();
+        if max <= own || max < 2 { return None; }
+        Some(curr)
+    }
+
+    /// Forces a core with more than 2 threads to migrate one through a Reschedule IPI.
+    /// (Sends a reschedule IPI that will result in a migration within switch_thread())
+    pub fn look_for_overloaded_core(&self) {
+        let overloaded_core = self.find_more_loaded_core();
+        match overloaded_core {
+            None => return,
+            Some(target_id) => send_reschedule_ipi(target_id)
+        }
     }
 
     /// Pops the last inserted thread from the ready queue.
@@ -797,6 +825,7 @@ pub fn read_rq_len_remote(target_id: usize) -> u32 {
 //idle_thread thread that halts the cpu and until it gets woken up by interrupts
 extern "sysv64" fn idle_thread () -> () {   //should never return but new_kernel_thread requires it
     loop {
+        scheduler().look_for_overloaded_core();
         unsafe { asm!("hlt"); }
     }
 }
