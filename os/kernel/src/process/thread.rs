@@ -55,7 +55,7 @@ use x86_64::PrivilegeLevel::Ring3;
 use x86_64::VirtAddr;
 use x86_64::structures::gdt::SegmentSelector;
 use x86_64::structures::paging::Page;
-use crate::process::core_local_storage::tss;
+use crate::process::core_local_storage::tss_static;
 
 /// kernel & user stack of a thread
 struct Stacks {
@@ -206,7 +206,7 @@ impl Thread {
         scheduler.set_init(); // scheduler initialized
 
         let thread = scheduler.current_thread();
-        tss().lock().privilege_stack_table[0] = thread.kernel_stack_addr(); // get stack pointer for kernel stack
+        tss_static().lock().privilege_stack_table[0] = thread.kernel_stack_addr(); // get stack pointer for kernel stack
 
         if thread.is_kernel_thread() {
             assert!(thread.user_kickoff.is_null());

@@ -1,7 +1,7 @@
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::memory::vma::VmaType;
-use crate::{acpi_tables, allocator, apic, cls, cls_mut, interrupt_dispatcher, process_manager, scheduler, timer};
+use crate::{acpi_tables, allocator, apic, cls, interrupt_dispatcher, process_manager, scheduler, timer};
 use acpi::InterruptModel;
 use acpi::madt::Madt;
 use acpi::platform::interrupt::{InterruptSourceOverride, NmiSource, Polarity, TriggerMode};
@@ -15,7 +15,7 @@ use uefi::boot::PAGE_SIZE;
 use x2apic::ioapic::{IoApic, IrqFlags, IrqMode, RedirectionTableEntry};
 use x2apic::lapic::{LocalApic, LocalApicBuilder, TimerDivide, TimerMode};
 use x86_64::structures::paging::PageTableFlags;
-use crate::process::core_local_storage::current_core_id;
+use crate::process::core_local_storage::{cls_mut, current_core_id, local_apic_static};
 
 pub struct Apic {
     //local_apic: Mutex<LocalApic>,
@@ -370,14 +370,14 @@ impl Apic {
     }
 
     pub fn end_of_interrupt(&self) {
-        let mut local_apic = cls().local_apic().try_lock();
+        let mut local_apic = local_apic_static().try_lock();
         while local_apic.is_none() {
             // It its extremely unlikely, that the local APIC is locked during an interrupt,
             // but if it happens, the whole system would hang, trying to send an EOI.
             unsafe {
                 cls_mut().local_apic().force_unlock();
             }
-            local_apic = cls().local_apic().try_lock();
+            local_apic = local_apic_static().try_lock();
         }
 
         unsafe {
@@ -386,12 +386,13 @@ impl Apic {
     }
 
     pub fn start_timer(&self, interval_ms: usize) {
-        let mut local_apic = cls().local_apic().lock();
+        let cls = cls();
+        let mut local_apic = cls.local_apic().lock();
 
         unsafe {
             local_apic.set_timer_divide(TimerDivide::Div1);
             local_apic.set_timer_mode(TimerMode::Periodic);
-            local_apic.set_timer_initial((cls().timer_ticks_per_ms() * interval_ms) as u32);
+            local_apic.set_timer_initial((cls.timer_ticks_per_ms() * interval_ms) as u32);
             local_apic.enable_timer();
         }
 

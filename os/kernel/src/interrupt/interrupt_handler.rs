@@ -1,4 +1,3 @@
-use core::sync::atomic::Ordering::Release;
 use crate::process::scheduler::set_resched_flag;
 
 pub trait InterruptHandler {

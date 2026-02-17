@@ -34,14 +34,14 @@ use core::arch::asm;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::sync::atomic::AtomicU32;
 use core::sync::atomic::Ordering::{Relaxed};
-use log::{info};
+use log::{debug, info};
 use smallmap::Map;
 use spin::{Mutex, MutexGuard};
 use thingbuf::mpsc::{Sender};
 use crate::device::apic::get_apic_id;
 use crate::device::cpu::{disable_int_nested, enable_int_nested};
 use crate::ipi::send_fixed_to_apic;
-use crate::process::core_local_storage::{current_core_id, preempt_is_disabled, scheduler, tss};
+use crate::process::core_local_storage::{current_core_id, preempt_is_disabled, scheduler, tss_static};
 
 // thread IDs
 pub static THREAD_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -128,7 +128,7 @@ impl Scheduler {
         let mut sum: u32 = 0;
         let active = ACTIVE_CPUS.load(Relaxed);
         for i in 0..active {
-            let rq = per_cpu_ref(i as usize).rq_len.load(core::sync::atomic::Ordering::Acquire);
+            let rq = per_cpu_ref(i as usize).rq_len.load(Ordering::Acquire);
             // Detect runaway counters without panicking the whole kernel in debug
             match sum.checked_add(rq) {
                 Some(s) => sum = s,
@@ -138,8 +138,6 @@ impl Scheduler {
                 }
             }
         }
-        // include the currently-running thread on each CPU:
-        //sum += active;
 
         // Clamp to usize on 32-bit safely (and give a clear sentinel on 32-bit if it ever overflows)
         if sum > usize::MAX as u32 {
@@ -498,7 +496,7 @@ impl Scheduler {
             let current_was_idle = current.id() == state.idle_thread.id();
 
             // Current thread is initializing itself and may not be interrupted
-            if current.stacks_locked() || tss().is_locked() {
+            if current.stacks_locked() || tss_static().is_locked() {
                 if interrupt {
                     apic().end_of_interrupt();
                 }

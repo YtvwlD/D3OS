@@ -18,7 +18,7 @@
 #![no_std]
 
 use alloc::boxed::Box;
-use crate::device::apic::{get_apic_id, Apic};
+use crate::device::apic::{Apic};
 use crate::device::cpu::Cpu;
 use crate::device::lfb_terminal::{CursorThread, LFBTerminal};
 use crate::device::pci::PciBus;
@@ -44,7 +44,6 @@ use x86_64::instructions::interrupts;
 use core::fmt::Arguments;
 use core::hint::spin_loop;
 use core::panic::PanicInfo;
-use core::sync::atomic::Ordering;
 use multiboot2::ModuleTag;
 use spin::{Mutex, Once, RwLock};
 use tar_no_std::TarArchiveRef;
@@ -54,7 +53,7 @@ use x86_64::{PhysAddr};
 use x86_64::structures::idt::InterruptDescriptorTable;
 use x86_64::structures::paging::PhysFrame;
 use x86_64::structures::paging::frame::PhysFrameRange;
-use crate::process::core_local_storage::{cls, cls_mut, current_core_id, scheduler};
+use crate::process::core_local_storage::{cls, scheduler};
 
 extern crate alloc;
 extern crate llfree;
