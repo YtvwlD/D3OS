@@ -431,23 +431,21 @@ impl Scheduler {
     fn block_and_switch(&self, mut state: MutexGuard<ReadyState>) {
         let mut next_thread = state.ready_queue.pop_back();
 
-        {
-            // Execute in own block, so that the lock is released automatically (block() does not return)
+        if next_thread.is_none() {
+            // Execute in own if-block, so that the lock is released automatically (block() does not return)
             let mut sleep_list = self.sleep_list.lock();
-            if next_thread.is_none() {
-                Scheduler::check_sleep_list(&mut state, &mut sleep_list);
-                state = drain_inbox_into_ready(10, state);
-                next_thread = state.ready_queue.pop_back();
-                if next_thread.is_none() {  //still no new thread => switch to idle
-                    next_thread = Some(Arc::clone(&state.idle_thread));
-                }
+            Scheduler::check_sleep_list(&mut state, &mut sleep_list);
+            state = drain_inbox_into_ready(10, state);
+            next_thread = state.ready_queue.pop_back();
+            if next_thread.is_none() {  //still no new thread => switch to idle
+                next_thread = Some(Arc::clone(&state.idle_thread));
             }
         }
 
         let current = Scheduler::current(&mut state);
         let next = next_thread.unwrap();
 
-        // Thread has enqueued itself into sleep list and waited so long,
+        // Thread has enqueued itself into sleep list and waited so little,
         // that it dequeued itself in the meantime
         if current.id() == next.id() {
             return;
