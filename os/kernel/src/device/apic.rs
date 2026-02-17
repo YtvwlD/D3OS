@@ -90,9 +90,6 @@ impl Apic {
         // Vector to store initialized IO APICs with their base interrupt number
         let mut io_apics = Vec::<(Mutex<IoApic>, u32)>::new();
 
-        // Create Local APIC instance
-        let mut kernel_local_apic = cls().local_apic().lock();
-
         match int_model.0 {
             InterruptModel::Apic(apic_desc) => {
                 // Read and store IRQ override entries
@@ -247,6 +244,8 @@ impl Apic {
             }
         }
 
+        // Create Local APIC instance
+        let mut kernel_local_apic = local_apic_static().lock();
         // Initialization is finished -> Enable Local Apic
         unsafe {
             info!(

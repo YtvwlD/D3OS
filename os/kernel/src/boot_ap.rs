@@ -54,7 +54,7 @@ pub(crate) extern "sysv64" fn idle_thread() {
             let thread = Thread::new_kernel_thread(idle_thread2, "idle");
             let tid = thread.id();
 
-            if let Ok(r) = schedule_on(3,WorkItem::new(thread)){
+            if let Ok(_r) = schedule_on(3,WorkItem::new(thread)){
                 info!("Thread sent: id: {}", tid);
             }
             loop{}
@@ -99,9 +99,9 @@ pub(crate) extern "sysv64" fn debug_thread() {
 
 pub(crate) extern "sysv64" fn debug_thread2() {
     loop {
-        scheduler().sleep(1000);
         info!("debug thread2");
         scheduler().debug_scheduler();
+        scheduler().sleep(1000);
 
         /*let id = current_core_id();
         let tid = scheduler().current_thread().id();

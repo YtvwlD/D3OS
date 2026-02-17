@@ -547,8 +547,6 @@ impl Scheduler {
         let nbr_threads = self.active_thread_count() as u32;
         let own_threads = read_rq_len() as u32;
         let nbr_cpus = ACTIVE_CPUS.load(Relaxed);
-        /*info!("Scheduler{}: total_threads: {}, own_threads: {}, cpus: {}",
-            current_core_id(), nbr_threads, own_threads, nbr_cpus);*/
         if own_threads > (nbr_threads /nbr_cpus +1){
             info!("Scheduler{}: total_threads: {}, own_threads: {}, cpus: {}",
                 current_core_id(), nbr_threads, own_threads, nbr_cpus);
@@ -562,7 +560,7 @@ impl Scheduler {
     fn balance_once<'a>(&'a self, mut state: MutexGuard<'a, ReadyState>) -> MutexGuard<'a, ReadyState> {
         let own_load = read_rq_len() as usize;
         if own_load <= 1 {
-            panic!("Scheduler: Cannot balance, current load ({:?}) is too low!", own_load);
+            //debug!("Scheduler: Cannot balance, current load ({:?}) is too low!", own_load);
         }
 
         if let Some((target_core, target_load)) = self.find_less_loaded_core() {
@@ -596,7 +594,7 @@ impl Scheduler {
             if min > read_rq_len_remote(i) {
                 min = read_rq_len_remote(i);
                 curr = i;
-            };
+            }
         }
         let own = read_rq_len();
         if min >= own { panic!("Scheduler: Cannot find less_loaded_core, current min ({:?}) is too low!",min); }
