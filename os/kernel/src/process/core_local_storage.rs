@@ -265,7 +265,11 @@ fn preempt_enable_no_swap() {
 
 #[inline(always)]
 pub fn preempt_is_disabled() -> bool {
-    cls().preempt_count.load(Ordering::SeqCst) != 0
+    let base = read_kernel_gs_base() as *mut u8;
+    unsafe {
+        let cnt_ptr = base.add(PREEMPT_COUNT_OFFSET) as *mut AtomicUsize;
+        (*cnt_ptr).load(Ordering::SeqCst) != 0
+    }
 }
 
 
