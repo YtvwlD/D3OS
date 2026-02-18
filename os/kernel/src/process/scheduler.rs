@@ -277,7 +277,6 @@ impl Scheduler {
         if let Some(pos) = block_list.iter().position(|thread| thread.id() == tid && thread.process().id() == pid) {
             let thread = block_list.remove(pos);
             self.ready(thread);
-            inc_rq_len();
         }
     }
 
@@ -301,7 +300,6 @@ impl Scheduler {
             let mut join_map = self.join_map.lock();
             if let Some(join_list) = join_map.get_mut(&thread_id) {
                 join_list.push(thread);
-                dec_rq_len();
             } else {
                 // Joining on a non-existent thread has no effect (i.e. the thread has already finished running)
                 return;
@@ -783,6 +781,18 @@ pub fn drain_inbox_into_ready(max: usize, mut state: MutexGuard<ReadyState>) -> 
 fn send_reschedule_ipi(target_id: usize) {
     send_fixed_to_apic(per_cpu_apic_id(target_id),0xf1)
 }
+/// Owner function to set the reschedule flag of the current core.
+pub fn set_resched_flag() {
+    per_cpu_ref(current_core_id() as usize).resched_flag.store(true, Ordering::Release);
+}
+/// Owner function to clear the reschedule flag of the current core.
+pub fn clear_resched_flag() {
+    per_cpu_ref(current_core_id() as usize).resched_flag.store(false, Ordering::Release);
+}
+/// Owner function to read the reschedule flag of the current core.
+pub fn read_resched_flag() -> bool {
+    per_cpu_ref(current_core_id() as usize).resched_flag.load(Ordering::Acquire)
+}
 /// Owner function to increase the runqueue length of the current core.
 pub fn inc_rq_len() {
     let id = current_core_id() as usize;
@@ -796,18 +806,6 @@ pub fn dec_rq_len() {
 /// Owner function to read the runqueue length of the current core.
 pub fn read_rq_len() -> u32 {
     per_cpu_ref(current_core_id() as usize).rq_len.load(Ordering::Acquire)
-}
-/// Owner function to set the reschedule flag of the current core.
-pub fn set_resched_flag() {
-    per_cpu_ref(current_core_id() as usize).resched_flag.store(true, Ordering::Release);
-}
-/// Owner function to clear the reschedule flag of the current core.
-pub fn clear_resched_flag() {
-    per_cpu_ref(current_core_id() as usize).resched_flag.store(false, Ordering::Release);
-}
-/// Owner function to read the reschedule flag of the current core.
-pub fn read_resched_flag() -> bool {
-    per_cpu_ref(current_core_id() as usize).resched_flag.load(Ordering::Acquire)
 }
 /// Remote Reader function to read the runqueue length of the given Core
 pub fn read_rq_len_remote(target_id: usize) -> u32 {
