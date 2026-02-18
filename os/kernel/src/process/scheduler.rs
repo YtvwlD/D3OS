@@ -28,6 +28,7 @@ use crate::process::thread::Thread;
 use crate::{allocator, apic, cls, per_cpu_ref, timer};
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
+use alloc::vec;
 use alloc::vec::Vec;
 use core::{panic, ptr};
 use core::arch::asm;
@@ -36,7 +37,7 @@ use core::sync::atomic::AtomicU32;
 use core::sync::atomic::Ordering::{Relaxed};
 use log::{debug, info};
 use smallmap::Map;
-use spin::{Mutex, MutexGuard};
+use spin::{Mutex, MutexGuard, Once};
 use thingbuf::mpsc::{Sender};
 use crate::device::apic::get_apic_id;
 use crate::device::cpu::{disable_int_nested, enable_int_nested};
@@ -47,14 +48,43 @@ use crate::process::core_local_storage::{current_core_id, preempt_is_disabled, s
 pub static THREAD_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
 static ACTIVE_CPUS: AtomicU32 = AtomicU32::new(1);  //BP automatically
 
+/// Global set of "alive" thread IDs (across all cores).
+/// Presence means: joining on this tid should block (unless it exits concurrently).
+static ACTIVE_TIDS: Once<Mutex<Map<usize, ()>>> = Once::new();
+
+#[inline]
+pub fn active_tids() -> &'static Mutex<Map<usize, ()>> {
+    ACTIVE_TIDS.call_once(|| Mutex::new(Map::new()))
+}
+
+#[inline]
+fn mark_thread_alive(tid: usize) {
+    let mut set = active_tids().lock();
+    set.insert(tid, ());
+}
+
+#[inline]
+fn mark_thread_dead(tid: usize) {
+    let mut set = active_tids().lock();
+    set.remove(&tid);
+}
+
+#[inline]
+pub fn is_thread_alive(tid: usize) -> bool {
+    active_tids().lock().contains_key(&tid)
+}
+
+#[inline]
 pub fn next_thread_id() -> usize {
     THREAD_ID_COUNTER.fetch_add(1, Relaxed)
 }
 
+#[inline]
 pub fn cpu_mark_online() {
     ACTIVE_CPUS.fetch_add(1, Relaxed);
 }
 
+#[inline]
 pub fn cpu_count() -> u32 {
     ACTIVE_CPUS.load(Relaxed)
 }
@@ -203,6 +233,7 @@ impl Scheduler {
     /// Insert `thread` into the ready queue of the scheduler
     pub fn ready(&self, thread: Arc<Thread>) {
         let id = thread.id();
+        mark_thread_alive(id);
 
         // If we get the lock on 'self.state' but not on 'self.join_map' the system hangs.
         // The scheduler is not able to switch threads anymore, because of 'self.state' is locked,
@@ -292,17 +323,25 @@ impl Scheduler {
 
     /// Calling thread will block until thread with `thread_id` has terminated
     pub fn join(&self, thread_id: usize) {
+        // Fast path => if it's already dead, don't block.
+        if !is_thread_alive(thread_id) {
+            return;
+        }
+
         let state = self.get_ready_state();
         let thread = Scheduler::current(&state);
 
         {
             // Execute in own block, so that the lock is released automatically (block() does not return)
             let mut join_map = self.join_map.lock();
+            if !is_thread_alive(thread_id) {
+                return;
+            }
             if let Some(join_list) = join_map.get_mut(&thread_id) {
                 join_list.push(thread);
             } else {
-                // Joining on a non-existent thread has no effect (i.e. the thread has already finished running)
-                return;
+                // there is a Map on another Core, but we need one here as well
+                join_map.insert(thread_id, vec![thread]);
             }
         }
 
@@ -369,6 +408,7 @@ impl Scheduler {
         let after = ready_state.ready_queue.len();
 
         if before != after {
+            mark_thread_dead(thread_id);
             dec_rq_len();
         }
     }
