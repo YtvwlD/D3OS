@@ -302,7 +302,7 @@ impl Scheduler {
             self.ready(thread);
         }
         else {
-            schedule_all(MessageItem::Cmd(MessageCmd::Deblock {pid, tid}))
+            schedule_on_all_others(MessageItem::Cmd(MessageCmd::Deblock {pid, tid}))
         }
     }
 
@@ -354,7 +354,7 @@ impl Scheduler {
                 inc_rq_len();
             }
         }
-        schedule_all(MessageItem::Cmd(MessageCmd::JoinTargetExited {tid: thread_id}));
+        schedule_on_all_others(MessageItem::Cmd(MessageCmd::JoinTargetExited {tid: thread_id}));
         join_map.remove(&thread_id);
     }
 
@@ -390,21 +390,62 @@ impl Scheduler {
             panic!("A thread cannot kill itself!");
         }
 
-        let mut sleep_list = self.sleep_list.lock();
+        if self.kill_locally(thread_id, &mut *ready_state) == false {
+            schedule_on_all_others(MessageItem::Cmd(MessageCmd::Kill {tid: thread_id}))
+        }
+    }
 
-        let before = ready_state.ready_queue.len() + sleep_list.len() ;
-        ready_state.ready_queue.retain(|thread| thread.id() != thread_id);
-        sleep_list.retain(|(thread, _)| thread.id() != thread_id);
-        let after = ready_state.ready_queue.len() + sleep_list.len();
+    /// Kill the thread with the id `thread_id`, if it is on the same Core
+    /// goes through ready_queue, sleep_list, blocked_list, and join_map in this order
+    /// returns true if a thread with the given id was found
+    fn kill_locally(&self, thread_id: usize, state: &mut ReadyState) -> bool {
+        let mut changed = false;
 
+        // check ready_queue
+        let mut before = state.ready_queue.len();
+        state.ready_queue.retain(|thread| thread.id() != thread_id);
+        let mut after = state.ready_queue.len();
         if before != after {
+            changed = true;
+        }
+        if !changed {
+            {   // check sleep_list
+                let mut sleep_list = self.sleep_list.lock();
+                before = sleep_list.len();
+                sleep_list.retain(|(thread, _)| thread.id() != thread_id);
+                after = state.ready_queue.len() + sleep_list.len();
+            }
+            if before != after {
+                changed = true;
+            }
+            if!changed {
+                {   // check Block List
+                    let mut blocked_list = self.blocked_list.lock();
+                    let before = blocked_list.len();
+                    blocked_list.retain(|t| t.id() != thread_id);
+                    if blocked_list.len() != before {
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    // check all join_map's
+                    let mut join_map = self.join_map.lock();
+                    for (_target, wait_list) in join_map.iter_mut() {
+                        let before = wait_list.len();
+                        wait_list.retain(|t| t.id() != thread_id);
+                        if wait_list.len() != before {
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        if changed {
             mark_thread_dead(thread_id);
-            self.unjoin(thread_id, &mut ready_state);
+            self.unjoin(thread_id, state);
             dec_rq_len();
         }
-        else {
-            schedule_all(MessageItem::Cmd(MessageCmd::Kill {tid: thread_id}))
-        }
+        changed
     }
 
     /// Gives out current thread id, then calls other debug methods
@@ -755,22 +796,10 @@ impl Scheduler {
                 let thread = state.current_thread.as_ref().expect("Trying to kill current thread before initialization!");
                 if thread.id() == tid { //cant kill itself, reschedule for other thread
                     let _ = schedule_on(current_core_id() as usize, MessageItem::Cmd(MessageCmd::Kill { tid }));
-                    let _ = schedule_all(MessageItem::Cmd(MessageCmd::Kill { tid }));    //if target migrates until then
+                    let _ = schedule_on_all_others(MessageItem::Cmd(MessageCmd::Kill { tid }));    //if target migrates until then
                     return;
                 }
-
-                let mut sleep_list = self.sleep_list.lock();
-
-                let before = state.ready_queue.len() + sleep_list.len() ;
-                state.ready_queue.retain(|thread| thread.id() != tid);
-                sleep_list.retain(|(thread, _)| thread.id() != tid);
-                let after = state.ready_queue.len() + sleep_list.len();
-
-                if before != after {
-                    mark_thread_dead(tid);
-                    self.unjoin(tid, state);
-                    dec_rq_len();
-                }
+                self.kill_locally(tid, state);
             }
         }
     }
@@ -870,7 +899,7 @@ pub fn schedule_on(target_id: usize, item: MessageItem) -> Result<(), MessageIte
 
 /// Schedules a cmd (wrapped in a MessageItem) on ALL remote cores
 /// Does not send reschedule IPI's since only one core needs to actually do something
-pub fn schedule_all(item: MessageItem) {
+pub fn schedule_on_all_others(item: MessageItem) {
     let own_id = current_core_id() as usize;
     for i in 0..ACTIVE_CPUS.load(Ordering::Acquire) as usize {
         if i != own_id {
