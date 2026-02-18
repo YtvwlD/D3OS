@@ -309,6 +309,9 @@ impl Scheduler {
             let thread = block_list.remove(pos);
             self.ready(thread);
         }
+        else {
+            schedule_all(MessageItem::Cmd(MessageCmd::Deblock {pid, tid}))
+        }
     }
 
     /// Helper function for switching a thread not caused by an interrupt
@@ -349,6 +352,20 @@ impl Scheduler {
         self.block_and_switch(state);
     }
 
+    fn unjoin(&self, thread_id: usize, ready_state: &mut ReadyState) {
+
+        let mut join_map = self.join_map.lock();
+
+        if let Some(join_list) = join_map.get_mut(&thread_id) {
+            for thread in join_list {
+                ready_state.ready_queue.push_front(Arc::clone(thread));
+                inc_rq_len();
+            }
+        }
+        schedule_all(MessageItem::Cmd(MessageCmd::JoinTargetExited {tid: thread_id}));
+        join_map.remove(&thread_id);
+    }
+
     /// Exit calling thread.
     pub fn exit(&self) -> ! {
         let mut ready_state;
@@ -356,19 +373,13 @@ impl Scheduler {
 
         {
             // Execute in own block, so that join_map is released automatically (block() does not return)
-            let state = self.get_ready_state_and_join_map();
-            ready_state = state.0;
-            let mut join_map = state.1;
+            ready_state = self.get_ready_state();
 
             current = Scheduler::current(&ready_state);
-            let join_list = join_map.get_mut(&current.id()).expect("Missing join_map entry!");
 
-            for thread in join_list {
-                ready_state.ready_queue.push_front(Arc::clone(thread));
-                inc_rq_len();
-            }
-
-            join_map.remove(&current.id());
+            // Mark dead globally *before* waking joiners, so joiners racing in will observe "dead"
+            mark_thread_dead(current.id());
+            self.unjoin(current.id(), &mut ready_state);
         }
 
         dec_rq_len();
@@ -378,38 +389,29 @@ impl Scheduler {
     }
 
     /// Kill the thread with the id `thread_id`, if it is on the same Core
-    /// TODO: implement search for all cores
     pub fn kill(&self, thread_id: usize) {
-        {
-            // Check if current thread tries to kill itself (illegal)
-            let ready_state = self.get_ready_state();
-            let current = Scheduler::current(&ready_state);
+        let mut ready_state = self.get_ready_state();
+        let current = Scheduler::current(&ready_state);
 
-            if current.id() == thread_id {
-                panic!("A thread cannot kill itself!");
-            }
+        // Check if current_thread tries to kill itself (illegal)
+        if current.id() == thread_id {
+            panic!("A thread cannot kill itself!");
         }
 
-        let state = self.get_ready_state_and_join_map();
-        let mut ready_state = state.0;
-        let mut join_map = state.1;
+        let mut sleep_list = self.sleep_list.lock();
 
-        let join_list = join_map.get_mut(&thread_id).expect("Missing join map entry!");
-
-        for thread in join_list {
-            ready_state.ready_queue.push_front(Arc::clone(thread));
-            inc_rq_len();
-        }
-
-        join_map.remove(&thread_id);
-
-        let before = ready_state.ready_queue.len();
+        let before = ready_state.ready_queue.len() + sleep_list.len() ;
         ready_state.ready_queue.retain(|thread| thread.id() != thread_id);
-        let after = ready_state.ready_queue.len();
+        sleep_list.retain(|(thread, _)| thread.id() != thread_id);
+        let after = ready_state.ready_queue.len() + sleep_list.len();
 
         if before != after {
             mark_thread_dead(thread_id);
+            self.unjoin(thread_id, &mut ready_state);
             dec_rq_len();
+        }
+        else {
+            schedule_all(MessageItem::Cmd(MessageCmd::Kill {tid: thread_id}))
         }
     }
 
@@ -603,7 +605,7 @@ impl Scheduler {
                     state = old_state;
                     if let Some(thread) = thread_opt {
                         let tid = thread.id();
-                        let w = WorkItem::new(thread);
+                        let w = MessageItem::new_thread(thread);
                         dec_rq_len();
                         if let Ok(_r) = schedule_on(target_core, w) {
                             info!(" Scheduler{}: Scheduled thread {} on core {}", current_core_id(), tid, target_core);
@@ -726,31 +728,115 @@ impl Scheduler {
             }
         }
     }
+
+    /// Handle a command received via inbox, using the already-held ready_state lock (`state`).
+    fn handle_inbox_cmd(&self, cmd: MessageCmd, state: &mut ReadyState) {
+        match cmd {
+            // Wake local join-waiters and add to readyQueue
+            MessageCmd::JoinTargetExited { tid } => {
+                let mut join_map = self.join_map.lock();
+
+                if let Some(join_list) = join_map.get_mut(&tid) {
+                    for waiter in join_list.drain(..) {
+                        state.ready_queue.push_front(waiter);
+                        inc_rq_len();
+                    }
+                    join_map.remove(&tid);
+                }
+            }
+            // If the thread is locally blocked, requeue it.
+            MessageCmd::Deblock { pid, tid } => {
+                if is_thread_alive(tid) == false { return; }
+                let mut blocked_list = self.blocked_list.lock();
+
+                if let Some(pos) = blocked_list
+                    .iter().position(|t| t.id() == tid && t.process().id() == pid)
+                {
+                    let thread = blocked_list.remove(pos);
+                    state.ready_queue.push_front(thread);
+                    inc_rq_len();
+                }
+            }
+            // if you have this thread, kill it
+            MessageCmd::Kill { tid } => {
+                if is_thread_alive(tid) == false { return; }
+                let thread = state.current_thread.as_ref().expect("Trying to kill current thread before initialization!");
+                if thread.id() == tid { //cant kill itself, reschedule for other thread
+                    let _ = schedule_on(current_core_id() as usize, MessageItem::Cmd(MessageCmd::Kill { tid }));
+                    let _ = schedule_all(MessageItem::Cmd(MessageCmd::Kill { tid }));    //if target migrates until then
+                    return;
+                }
+
+                let mut sleep_list = self.sleep_list.lock();
+
+                let before = state.ready_queue.len() + sleep_list.len() ;
+                state.ready_queue.retain(|thread| thread.id() != tid);
+                sleep_list.retain(|(thread, _)| thread.id() != tid);
+                let after = state.ready_queue.len() + sleep_list.len();
+
+                if before != after {
+                    mark_thread_dead(tid);
+                    self.unjoin(tid, state);
+                    dec_rq_len();
+                }
+            }
+        }
+    }
 }
 
 
 //// Multicore support  ////
 
 /// Helper struct to store shared public information of a core
+///     rq_len: approximate runqueue length (owner updates, others read)
+///     resched_flag: indicates whether another core requested a reschedule
+///     tx: sender for other cores to send messages to this one
+///     apic_id: stored at initialization, used to translate cpu_id to apic_id for IPI's
 #[repr(align(64))]
 pub struct PerCpuRef {
-    // Approximate runqueue length (owner updates, others read)
     rq_len: AtomicU32,
     resched_flag: AtomicBool,
-    tx: Sender<Option<WorkItem>>,    // producers (remote cores)
+    tx: Sender<Option<MessageItem>>,    // producers (remote cores)
     apic_id: AtomicUsize,
 }
 unsafe impl Sync for PerCpuRef {}
-impl PerCpuRef { pub fn new(tx: Sender<Option<WorkItem>>) -> Self {
+impl PerCpuRef { pub fn new(tx: Sender<Option<MessageItem>>) -> Self {
     Self { rq_len: AtomicU32::new(0), resched_flag: AtomicBool::new(false),
         tx, apic_id: AtomicUsize::new(0) } } }
 
 
-/// Wrapper struct to store a thread and possible future meta data
+/// Wrapper enum to store either a runnable thread or a small cross-core command.
+/// (Should be kept "small" since it lives in per-core inboxes and is drained in scheduler paths)
 #[derive(Clone)]
-pub struct WorkItem { pub thread: Arc<Thread>, }
+pub enum MessageItem {
+    Thread(Arc<Thread>),
+    Cmd(MessageCmd),
+}
 
-impl WorkItem { pub fn new(thread: Arc<Thread>) -> Self { Self { thread } } }
+impl MessageItem {
+    #[inline]
+    pub fn new_thread(thread: Arc<Thread>) -> Self {
+        MessageItem::Thread(thread)
+    }
+    #[inline]
+    pub fn new_cmd(cmd: MessageCmd) -> Self {
+        MessageItem::Cmd(cmd)
+    }
+}
+
+
+/// Commands that a core can request another core to perform locally
+#[derive(Clone)]
+pub enum MessageCmd {
+    /// "Thread with `tid` exited somewhere; if you have join-waiters for it locally, wake them."
+    JoinTargetExited { tid: usize },
+
+    /// "If you have this thread in your local blocked list, wake it."
+    Deblock { pid: usize, tid: usize },
+
+    /// "If you have this thread, kill it."
+    Kill { tid: usize },
+}
 
 /// Called only once by each owner core during startup to set the PER_CPU_SCHED apic_id
 pub fn set_inbox_apic_id(id: usize) {
@@ -773,13 +859,13 @@ pub fn per_cpu_ref_curr() -> &'static PerCpuRef {
 
 /// Returns a reference to the sender out of the PerCpuSched struct of the core with the given id
 #[inline]
-pub fn per_cpu_sender(id: usize) -> &'static Sender<Option<WorkItem>> {
+pub fn per_cpu_sender(id: usize) -> &'static Sender<Option<MessageItem>> {
     &per_cpu_ref(id).tx
 }
 
-/// Schedules a thread (wrapped in a WorkItem) on a remote core with the target_id
+/// Schedules a thread (wrapped in a MessageItem) on a remote core with the target_id
 /// Sends a reschedule IPI to wake that core up, if it was idle.
-pub fn schedule_on(target_id: usize, item: WorkItem) -> Result<(), WorkItem> {
+pub fn schedule_on(target_id: usize, item: MessageItem) -> Result<(), MessageItem> {
     let pc = per_cpu_ref(target_id);
     match pc.tx.try_send(Some(item)) {
         Ok(()) => {
@@ -790,19 +876,41 @@ pub fn schedule_on(target_id: usize, item: WorkItem) -> Result<(), WorkItem> {
     }
 }
 
+/// Schedules a cmd (wrapped in a MessageItem) on ALL remote cores
+/// Does not send reschedule IPI's since only one core needs to actually do something
+pub fn schedule_all(item: MessageItem) {
+    let own_id = current_core_id() as usize;
+    for i in 0..ACTIVE_CPUS.load(Ordering::Acquire) as usize {
+        if i != own_id {
+            let pc = per_cpu_ref(i);
+            pc.tx.try_send(Some(item.clone())).expect("Failed to send message to remote core!");
+        }
+    }
+}
+
 /// drains the inbox from the cls into the ready queue; 10 items max per call
 /// automatically calls inc_rq_len()
 pub fn drain_inbox_into_ready(max: usize, mut state: MutexGuard<ReadyState>) -> MutexGuard<ReadyState> {
-    let mut drained = 0usize;
+    let mut drained_threads = 0usize;
     for _ in 0..max {
         match cls().try_recv() {
-            Ok(Some(item)) => {
-                let tid = item.thread.id();
-                state.ready_queue.push_front(item.thread);
-                inc_rq_len();
-                drained += 1;
-                log::trace!("cpu{}: drained thread {} into ready_queue (rq_len now ~inc)", current_core_id(), tid);
-            }
+            Ok(Some(item)) => match item {
+                MessageItem::Thread(thread) => {
+                    let tid = thread.id();
+                    state.ready_queue.push_front(thread);
+                    inc_rq_len();
+                    drained_threads += 1;
+                    log::trace!(
+                        "cpu{}: drained thread {} into ready_queue",
+                        current_core_id(),
+                        tid
+                    );
+                }
+                MessageItem::Cmd(cmd) => {
+                    // We already hold ready_state (`state`)
+                    scheduler().handle_inbox_cmd(cmd, &mut *state);
+                }
+            },
             Ok(None) => {
                 log::error!("cpu{}: inbox returned None (unexpected)", current_core_id());
                 break;
@@ -810,9 +918,9 @@ pub fn drain_inbox_into_ready(max: usize, mut state: MutexGuard<ReadyState>) -> 
             Err(_) => break,
         }
     }
-    if drained > 0 {
+    if drained_threads > 0 {
         clear_resched_flag();
-        log::debug!("cpu{}: drained {} thread(s) into ready_queue", current_core_id(), drained);
+        log::debug!("cpu{}: drained {} thread(s) into ready_queue", current_core_id(), drained_threads);
     }
     state
 }

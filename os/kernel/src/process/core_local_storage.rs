@@ -18,7 +18,7 @@ use x86_64::structures::gdt::{Descriptor, GlobalDescriptorTable};
 use x86_64::structures::tss::TaskStateSegment;
 use x86_64::VirtAddr;
 use crate::device::apic::Apic;
-use crate::process::scheduler::{per_cpu_apic_id, set_inbox_apic_id, Scheduler, WorkItem};
+use crate::process::scheduler::{per_cpu_apic_id, set_inbox_apic_id, Scheduler, MessageItem};
 use crate::take_inbox_receiver;
 
 const PREEMPT_COUNT_OFFSET: usize = offset_of!(CoreLocalStorage, preempt_count);
@@ -39,7 +39,7 @@ pub struct CoreLocalStorage {
     tss: Mutex<TaskStateSegment>,
     gdt: Mutex<GlobalDescriptorTable>,
     scheduler: Scheduler,
-    rx: Receiver<Option<WorkItem>>,  // single owner (this core)
+    rx: Receiver<Option<MessageItem>>,  // single owner (this core)
     preempt_count: AtomicUsize,
 }
 
@@ -67,7 +67,7 @@ impl CoreLocalStorage {
     }
 
     /// Tries to receive a WorkItem from the inbox.
-    pub fn try_recv(&self) -> Result<Option<WorkItem>, TryRecvError> {
+    pub fn try_recv(&self) -> Result<Option<MessageItem>, TryRecvError> {
         self.rx.try_recv()
     }
 

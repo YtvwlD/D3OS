@@ -1,5 +1,5 @@
 use log::info;
-use crate::{apic, cls, scheduler, WorkItem, APIC};
+use crate::{apic, cls, scheduler, MessageItem, APIC};
 use crate::device::apic::Apic;
 use crate::process::core_local_storage::{current_core_id, init_gdt_for_this_core, install_gs_base, scheduler_start};
 use crate::process::scheduler;
@@ -54,7 +54,7 @@ pub(crate) extern "sysv64" fn idle_thread() {
             let thread = Thread::new_kernel_thread(idle_thread2, "idle");
             let tid = thread.id();
 
-            if let Ok(_r) = schedule_on(3,WorkItem::new(thread)){
+            if let Ok(_r) = schedule_on(3, MessageItem::new_thread(thread)){
                 info!("Thread sent: id: {}", tid);
             }
             loop{}
