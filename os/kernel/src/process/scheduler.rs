@@ -173,15 +173,7 @@ impl Scheduler {
 
     /// Get all active thread IDs
     pub fn active_thread_ids(&self) -> Vec<usize> {
-        let state = self.get_ready_state();
-        let sleep_list = self.sleep_list.lock();
-
-        state.ready_queue.iter()
-            .map(|thread| thread.id())
-            .collect::<Vec<usize>>()
-            .into_iter()
-            .chain(sleep_list.iter().map(|entry| entry.0.id()))
-            .collect()
+        Vec::from_iter(active_tids().lock().iter().cloned().map(|t | t.0))
     }
 
     /// Return reference to current thread
@@ -746,8 +738,8 @@ impl Scheduler {
             }
             // If the thread is locally blocked, requeue it.
             MessageCmd::Deblock { pid, tid } => {
-                if is_thread_alive(tid) == false { return; }
                 let mut blocked_list = self.blocked_list.lock();
+                if is_thread_alive(tid) == false { return; }
 
                 if let Some(pos) = blocked_list
                     .iter().position(|t| t.id() == tid && t.process().id() == pid)
@@ -907,7 +899,6 @@ pub fn drain_inbox_into_ready(max: usize, mut state: MutexGuard<ReadyState>) -> 
                     );
                 }
                 MessageItem::Cmd(cmd) => {
-                    // We already hold ready_state (`state`)
                     scheduler().handle_inbox_cmd(cmd, &mut *state);
                 }
             },
