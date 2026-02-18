@@ -45,18 +45,10 @@ use crate::process::core_local_storage::{current_core_id, preempt_is_disabled, s
 
 // thread IDs
 pub static THREAD_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
-pub static THREAD_KILLED_COUNTER: AtomicUsize = AtomicUsize::new(1);
 static ACTIVE_CPUS: AtomicU32 = AtomicU32::new(1);  //BP automatically
 
 pub fn next_thread_id() -> usize {
     THREAD_ID_COUNTER.fetch_add(1, Relaxed)
-}
-
-pub fn thread_removed() -> usize {
-    THREAD_KILLED_COUNTER.fetch_add(1, Relaxed)
-}
-pub fn thread_deblocked() -> usize {
-    THREAD_KILLED_COUNTER.fetch_sub(1, Relaxed)
 }
 
 pub fn cpu_mark_online() {
