@@ -316,13 +316,14 @@ impl LFBTerminal {
         let uptime = TimeDelta::try_milliseconds(timer().systime_ms() as i64).expect("Failed to create TimeDelta struct from systime");
         let active_process_ids = process_manager().read().active_process_ids();
         let active_thread_count = scheduler().active_thread_count();
+        let alive_thread_count = scheduler().active_thread_ids().len();
         let active_cpu_ids = scheduler::cpu_count();
 
         // Draw info string
-        let info_string = format!("D³OS v{} ({}) | Uptime: {:0>2}:{:0>2}:{:0>2} | Processes: {} | Threads: {} | Cores: {}",
+        let info_string = format!("D³OS v{} ({})| Uptime: {:0>2}:{:0>2}:{:0>2} | Processes: {} | Threads: {}[{}] | Cpus: {}",
               built_info::PKG_VERSION, built_info::PROFILE,
               uptime.num_hours(), uptime.num_minutes() % 60, uptime.num_seconds() - (uptime.num_minutes() * 60),
-              active_process_ids.len(), active_thread_count, active_cpu_ids);
+              active_process_ids.len(), active_thread_count, alive_thread_count, active_cpu_ids);
 
         display.lfb.lfb().draw_string(0, 0, color::HHU_BLUE, color::INVISIBLE, info_string.as_str());
 
