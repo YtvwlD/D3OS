@@ -17,7 +17,8 @@ members = [
     "os/application/ping",
     "os/application/ip",
     "os/application/peanut-gb",
-    "os/application/pipetest"
+    "os/application/pipetest",
+    "os/application/mandelbrot",
 ]
 
 # [profile.release]
