@@ -360,19 +360,12 @@ impl Scheduler {
 
     /// Exit calling thread.
     pub fn exit(&self) -> ! {
-        let mut ready_state;
-        let current;
+        let mut ready_state = self.get_ready_state();
+        let current= Scheduler::current(&ready_state);
 
-        {
-            // Execute in own block, so that join_map is released automatically (block() does not return)
-            ready_state = self.get_ready_state();
-
-            current = Scheduler::current(&ready_state);
-
-            // Mark dead globally *before* waking joiners, so joiners racing in will observe "dead"
-            mark_thread_dead(current.id());
-            self.unjoin(current.id(), &mut ready_state);
-        }
+        // Mark dead globally *before* waking joiners, so joiners racing in will observe "dead"
+        mark_thread_dead(current.id());
+        self.unjoin(current.id(), &mut ready_state);
 
         dec_rq_len();
         drop(current); // Decrease Rc manually, because block() does not return
@@ -399,6 +392,7 @@ impl Scheduler {
     /// goes through ready_queue, sleep_list, blocked_list, and join_map in this order
     /// returns true if a thread with the given id was found
     fn kill_locally(&self, thread_id: usize, state: &mut ReadyState) -> bool {
+        if is_thread_alive(thread_id) == false { return true; }
         let mut changed = false;
 
         // check ready_queue
