@@ -468,6 +468,10 @@ impl Scheduler {
         for thread in sleep_list.iter() {
             info!("  - {}, {}", thread.0.id(), thread.1);
         }
+        for i in 0..nbr_cpus {
+            info!("Cpu {} has {} active threads running", i, read_rq_len_remote(i as usize));
+        }
+
         enable_int_nested(nested);
     }
 
@@ -663,7 +667,7 @@ impl Scheduler {
             }
         }
         let own = read_rq_len();
-        if min >= own { panic!("Scheduler: Cannot find less_loaded_core, current min ({:?}) is too low!",min); }
+        if min >= own { return None; }
         Some((curr, min as usize))
     }
 
