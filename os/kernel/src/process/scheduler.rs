@@ -504,7 +504,7 @@ impl Scheduler {
             // Execute in own if-block, so that the lock is released automatically (block() does not return)
             let mut sleep_list = self.sleep_list.lock();
             Scheduler::check_sleep_list(&mut state, &mut sleep_list);
-            state = drain_inbox_into_ready(10, state);
+            drain_inbox_into_ready(10, &mut state);
             next_thread = state.ready_queue.pop_back();
             if next_thread.is_none() {  //still no new thread => switch to idle
                 next_thread = Some(Arc::clone(&state.idle_thread));
@@ -551,11 +551,11 @@ impl Scheduler {
             if let Some(mut sleep_list) = self.sleep_list.try_lock() {
                 Scheduler::check_sleep_list(&mut state, &mut sleep_list);
             }
-            state = drain_inbox_into_ready(10, state);
+            drain_inbox_into_ready(10, &mut state);
 
             // Check if this core has too many threads running
             if read_resched_flag() || self.should_balance_now() {
-                state = self.balance_once(state);
+                self.balance_once(&mut state);
             }
 
             // Get clone of the current thread
@@ -626,11 +626,11 @@ impl Scheduler {
     /// Balances the threads on the current core by moving one thread from the tail to the target core.
     /// Target core is the core with the least number of threads.
     /// Returns the new state of the scheduler. (needed for mutable access)
-    fn balance_once<'a>(&'a self, mut state: MutexGuard<'a, ReadyState>) -> MutexGuard<'a, ReadyState> {
+    fn balance_once(&self, state: &mut ReadyState) {
         let own_load = read_rq_len() as usize;
         if own_load <= 1 {
             //debug!("Scheduler: Cannot balance, current load ({:?}) is too low!", own_load);
-            return state;
+            return;
         }
 
         if let Some((target_core, target_load)) = self.find_less_loaded_core() {
@@ -638,8 +638,7 @@ impl Scheduler {
                 let amount = ((own_load-target_load)/4)+1;
                 for _ in 0..amount {
                     // Move one thread from the tail to the target
-                    let (thread_opt, old_state) = self.pop_last(state);
-                    state = old_state;
+                    let thread_opt = self.pop_last(state);
                     if let Some(thread) = thread_opt {
                         let tid = thread.id();
                         let w = MessageItem::new_thread(thread);
@@ -651,7 +650,6 @@ impl Scheduler {
                 }
             }
         }
-        state
     }
 
     /// Finds the core with the least number of threads.
@@ -699,8 +697,8 @@ impl Scheduler {
     }
 
     /// Pops the last inserted thread from the ready queue.
-    fn pop_last<'a>(&'a self, mut state: MutexGuard<'a,ReadyState>) -> (Option<Arc<Thread>>, MutexGuard<'a,ReadyState>) {
-        (state.ready_queue.pop_front(), state)
+    fn pop_last(&self, state: &mut ReadyState) -> Option<Arc<Thread>> {
+        state.ready_queue.pop_front()
     }
 
     /// Return current running thread
@@ -915,7 +913,7 @@ pub fn schedule_on_all_others(item: MessageItem) {
 
 /// drains the inbox from the cls into the ready queue; 10 items max per call
 /// automatically calls inc_rq_len()
-pub fn drain_inbox_into_ready(max: usize, mut state: MutexGuard<ReadyState>) -> MutexGuard<ReadyState> {
+pub fn drain_inbox_into_ready(max: usize, state: &mut ReadyState) {
     let mut drained_threads = 0usize;
     for _ in 0..max {
         match cls().try_recv() {
@@ -932,7 +930,7 @@ pub fn drain_inbox_into_ready(max: usize, mut state: MutexGuard<ReadyState>) -> 
                     );
                 }
                 MessageItem::Cmd(cmd) => {
-                    scheduler().handle_inbox_cmd(cmd, &mut *state);
+                    scheduler().handle_inbox_cmd(cmd, state);
                 }
             },
             Ok(None) => {
@@ -946,7 +944,6 @@ pub fn drain_inbox_into_ready(max: usize, mut state: MutexGuard<ReadyState>) -> 
         clear_resched_flag();
         log::debug!("cpu{}: drained {} thread(s) into ready_queue", current_core_id(), drained_threads);
     }
-    state
 }
 
 /// Sends a Reschedule IPI to wake the core with the given id up, if it was idle.
