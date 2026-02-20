@@ -7,9 +7,7 @@ use crate::process::scheduler::{read_rq_len, schedule_on};
 use crate::process::thread::Thread;
 use crate::syscall::syscall_dispatcher;
 
-// First rust function called from assembly boot code for an
-// application core
-//
+/// First rust function called from assembly boot code for an application core
 #[unsafe(no_mangle)]
 pub extern "C" fn startup_ap(cpu_id: u32) {
     //info!("    Application processor executing 'startup_ap'");
@@ -23,15 +21,7 @@ pub extern "C" fn startup_ap(cpu_id: u32) {
 
     // Wait until the bootstrap processor has fully initialized the global APIC
     let _apic_ref = APIC.wait();
-
-    //info!("    APIC is ready!");
     Apic::enable_local_apic(cls().local_apic());
-
-    //debug_cls();
-
-    //scheduler().ready(Thread::new_kernel_thread(idle_thread, "idle"));
-    scheduler().ready(Thread::new_kernel_thread(debug_thread2, "debug2"));
-    //scheduler().ready(Thread::new_kernel_thread(idle_thread2, "idle"));
 
     info!("Starting scheduler{}",cpu_id);
     apic().start_timer(10);
@@ -40,72 +30,11 @@ pub extern "C" fn startup_ap(cpu_id: u32) {
     loop {}
 }
 
-//dummyThreads for testing
-pub(crate) extern "sysv64" fn idle_thread() {
-    loop {
-        scheduler().sleep(1000);
-        //info!("idling..");
-        let id = current_core_id();
-        //let tid = scheduler().current_thread().id();
-        //info!("Current core: {}, in thread: {}", id, tid);
-        //sleep and block is part of the issue
-
-        if id == 2 {
-            let thread = Thread::new_kernel_thread(idle_thread2, "idle");
-            let tid = thread.id();
-
-            if let Ok(_r) = schedule_on(3, MessageItem::new_thread(thread)){
-                info!("Thread sent: id: {}", tid);
-            }
-            loop{}
-        }
-        else if id == 1 {
-            scheduler().ready(Thread::new_kernel_thread(idle_thread2, "idle"));
-            scheduler().ready(Thread::new_kernel_thread(idle_thread2, "idle"));
-            loop{}
-        }
-    }
-}
-
-extern "sysv64" fn idle_thread2() {
-    loop {
-        info!("idling.. (but different) - id: {:?} - rq_len: {}",
-            current_core_id(), read_rq_len());
-        scheduler().sleep(1000);
-        let mut seven = 700000000;
-        while seven > 0 {
-            seven = seven -1;
-        }
-
-        /*let id = current_core_id();
-        let tid = scheduler().current_thread().id();
-        info!("Current core: {}, in thread: {}", id, tid);
-*/
-    }
-}
-
+/// Thread for testing multicore scheduling
 pub(crate) extern "sysv64" fn debug_thread() {
     loop {
-        scheduler().sleep(1000);
         info!("debug thread");
         scheduler().debug_scheduler();
-
-        /*let id = current_core_id();
-        let tid = scheduler().current_thread().id();
-        info!("Current core: {}, in thread: {}", id, tid);
-*/
-    }
-}
-
-pub(crate) extern "sysv64" fn debug_thread2() {
-    loop {
-        info!("debug thread2");
-        scheduler().debug_scheduler();
         scheduler().sleep(1000);
-
-        /*let id = current_core_id();
-        let tid = scheduler().current_thread().id();
-        info!("Current core: {}, in thread: {}", id, tid);
-*/
     }
 }

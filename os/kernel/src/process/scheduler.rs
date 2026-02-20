@@ -325,7 +325,6 @@ impl Scheduler {
 
         let state = self.get_ready_state();
         let thread = Scheduler::current(&state);
-
         {
             // Execute in own block, so that the lock is released automatically (block() does not return)
             let mut join_map = self.join_map.lock();
@@ -345,7 +344,6 @@ impl Scheduler {
     }
 
     fn unjoin(&self, thread_id: usize, ready_state: &mut ReadyState) {
-
         let mut join_map = self.join_map.lock();
 
         if let Some(join_list) = join_map.get_mut(&thread_id) {
@@ -446,6 +444,7 @@ impl Scheduler {
     pub fn debug_scheduler(&self) {
         let state = self.get_ready_state();
         let sleep_list = self.sleep_list.lock();
+
         let nested = disable_int_nested();
         let id = current_core_id();
         let nbr_threads = self.active_thread_count() as u32;
@@ -465,7 +464,6 @@ impl Scheduler {
         for i in 0..nbr_cpus {
             info!("Cpu {} has {} active threads running", i, read_rq_len_remote(i as usize));
         }
-
         enable_int_nested(nested);
     }
 
@@ -527,6 +525,7 @@ impl Scheduler {
 
     /// Switch from current to next thread (from ready queue). \
     /// If `interrupt` is true, the function is called from an ISR and will send EOI to APIC otherwise not.
+    /// Returns without doing anything if preemption is disabled.
     fn switch_thread(&self, interrupt: bool) {
         if let Some(mut state) = self.ready_state.try_lock() {
             if !state.initialized {
@@ -695,12 +694,12 @@ impl Scheduler {
         state.ready_queue.pop_front()
     }
 
-    /// Return current running thread
+    /// Return the current running thread
     fn current(state: &ReadyState) -> Arc<Thread> {
         Arc::clone(state.current_thread.as_ref().expect("Trying to access current thread before initialization!"))
     }
 
-    /// Return current running thread or None if not init yet
+    /// Return the current running thread or None if not init yet
     fn try_current(state: &ReadyState) -> Option<Arc<Thread>> {
         if state.current_thread.is_some() {
             Some(Arc::clone(state.current_thread.as_ref().unwrap()))
@@ -710,7 +709,7 @@ impl Scheduler {
         }
     }
 
-    /// Check sleep list for threads that need to be waken up
+    /// Check the sleep list for threads that need to be woken up
     fn check_sleep_list(state: &mut ReadyState, sleep_list: &mut Vec<(Arc<Thread>, usize)>) {
         let time = timer().systime_ms();
 
@@ -936,7 +935,7 @@ pub fn drain_inbox_into_ready(max: usize, state: &mut ReadyState) {
     }
     if drained_threads > 0 {
         clear_resched_flag();
-        log::debug!("cpu{}: drained {} thread(s) into ready_queue", current_core_id(), drained_threads);
+        debug!("cpu{}: drained {} thread(s) into ready_queue", current_core_id(), drained_threads);
     }
 }
 

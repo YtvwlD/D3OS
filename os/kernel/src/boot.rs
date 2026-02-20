@@ -162,9 +162,9 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     per_cpu_init(get_cpu_count(), 100);
     install_gs_base(0, true);
 
-    // Setup the GDT (Global Descriptor Table)
+    // Set up the GDT (Global Descriptor Table)
     // Has to be done after EFI boot services have been exited, since they rely on their own GDT
-    // Also now has do be done after the cls is setup, for tss() to work
+    // Also has to be done after the cls is setup, for tss() to work
     info!("Initializing GDT");
     init_gdt_for_this_core();
     syscall_dispatcher::init();
@@ -220,9 +220,8 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     info!("Compiler: [{}]", built_info::RUSTC_VERSION);
     info!("Bootloader: [{bootloader_name}]");
 
+    // Initialize IDT & Apic
     interrupt_dispatcher::setup_idt();
-
-
     init_apic();
 
     // Initialize timer
@@ -353,10 +352,6 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     // Start APIC timer & scheduler
     info!("Starting scheduler{}",current_core_id());
     apic().start_timer(10);
-    
-    //debug_cls();
-
-    scheduler().ready(Thread::new_kernel_thread(boot_ap::debug_thread, "debug"));
 
     scheduler_start()
 }
@@ -544,7 +539,7 @@ fn ap_boot_region() -> PhysFrameRange {
 }
 
 fn start_ap_processors() {
-    // install reschedule IPI handler
+    // install reschedule IPI handler for multicore support
     interrupt_dispatcher::install_reschedule_ipi_handler();
 
     info!("Booting AP cores");
@@ -553,11 +548,10 @@ fn start_ap_processors() {
     // send Init-IPI to all APs
     ipi::send_init();
 
-    // wait at least 10s (10000)
+    // wait at least 1s (1000)
     timer().wait(5000);
 
     // The vector is the startup address for the boot code
-    //let vector = (RELOCATE_BOOT_CODE >> 12) as u32;
     let vector: u8 = (boot_ap_start.addr() >> 12).try_into().unwrap();
 
     info!("   Sending STARTUP IPI #1");

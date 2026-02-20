@@ -66,12 +66,13 @@ impl CoreLocalStorage {
         &self.local_apic
     }
 
-    /// Tries to receive a WorkItem from the inbox.
+    /// Tries to receive a MessageItem from the inbox.
     pub fn try_recv(&self) -> Result<Option<MessageItem>, TryRecvError> {
         self.rx.try_recv()
     }
 
-    /// Sets the timer ticks per ms that will be used for the timer interrupt. (needs to be updated)
+    /// Sets the timer ticks per ms that will be used for the timer interrupt in the future.
+    /// (needs to be fixed)
     pub fn set_timer_ticks_per_ms(&mut self, ticks: usize) {
         assert_ne!(ticks, 0);
         self.timer_ticks_per_ms = ticks;
@@ -116,7 +117,7 @@ fn read_kernel_gs_base() -> u64 {
     ((hi as u64) << 32) | (lo as u64)
 }
 
-/// Returns the whole CLS from the GS segment
+/// Returns the whole CLS from the current GS segment
 #[inline(always)]
 fn cls_ptr_from_gs() -> *mut CoreLocalStorage {
     let struct_ptr: u64;
@@ -129,17 +130,10 @@ fn cls_ptr_from_gs() -> *mut CoreLocalStorage {
     }
     struct_ptr as *mut CoreLocalStorage
 }
+/// Returns the whole CLS from the switched kernelGS-Base
 #[inline(always)]
 pub fn cls_ptr() -> *mut CoreLocalStorage {
     with_kernel_gs( || { cls_ptr_from_gs()})
-}
-#[inline(always)]
-pub fn cls_old<'a>() -> &'a CoreLocalStorage {
-    unsafe { &*cls_ptr() }
-}
-#[inline(always)]
-pub fn cls_mut_old<'a>() -> &'a mut CoreLocalStorage {
-    unsafe { &mut *cls_ptr() }
 }
 
 /// wraps the code of another method with "swapgs" calls to get access to the
@@ -174,6 +168,7 @@ pub fn with_kernel_gs<R>(f: impl FnOnce() -> R) -> R {
 
 
 
+
     //// Preemption Guard and accessors ////
 
 /// Preemption Guard
@@ -198,7 +193,8 @@ impl<'a> Deref for ClsGuard<&'a mut CoreLocalStorage> {
 impl<'a> DerefMut for ClsGuard<&'a mut CoreLocalStorage> {
     fn deref_mut(&mut self) -> &mut CoreLocalStorage { self.r }
 }
-/// Map a mutable CLS guard into a guard of one of its fields.
+
+/// Map a mutable CLS guard into a guard of one of its fields. (for future work)
 impl<'a> ClsGuard<&'a CoreLocalStorage> {
     #[inline(always)]
     pub fn map_ref<T>(self, f: impl FnOnce(& CoreLocalStorage) -> & T) -> ClsGuard<&'a  T> {
@@ -214,7 +210,6 @@ impl<'a> ClsGuard<&'a CoreLocalStorage> {
         ClsGuard { _preempt: preempt, r: sub }
     }
 }
-
 /*
 pub type SchedulerRefGuard<'a> = ClsGuard<&'a Scheduler>;
 #[inline(always)]     // sleep() needs to be modified for this to work
@@ -222,11 +217,13 @@ pub fn scheduler() -> SchedulerRefGuard<'static> {
     cls().map_ref(|c| &c.scheduler)
 }*/
 
+/// CLS getter with preemption guard.
 pub fn cls() -> ClsGuard<&'static CoreLocalStorage> {
     let r = unsafe { & *cls_ptr() };
     ClsGuard::new(r)
 }
 
+/// mut CLS getter with preemption guard.
 pub fn cls_mut() -> ClsGuard<&'static mut CoreLocalStorage> {
     let r = unsafe { &mut *cls_ptr() };
     ClsGuard::new(r)
@@ -243,6 +240,7 @@ impl PreemptGuard {
     pub fn new() -> Self { preempt_disable_no_swap(); Self{} }
 }
 
+/// Disables preemption temporarily without switching gs bases.
 #[inline(always)]
 fn preempt_disable_no_swap() {
     let base = read_kernel_gs_base() as *mut u8;
@@ -252,6 +250,7 @@ fn preempt_disable_no_swap() {
     }
 }
 
+/// Enables preemption temporarily without switching gs bases.
 #[inline(always)]
 fn preempt_enable_no_swap() {
     let base = read_kernel_gs_base() as *mut u8;
@@ -263,6 +262,7 @@ fn preempt_enable_no_swap() {
     debug_assert!(prev_counter > 0);
 }
 
+/// Returns true if preemption is currently disabled. (without switching gs bases)
 #[inline(always)]
 pub fn preempt_is_disabled() -> bool {
     let base = read_kernel_gs_base() as *mut u8;
@@ -271,6 +271,7 @@ pub fn preempt_is_disabled() -> bool {
         (*cnt_ptr).load(Ordering::SeqCst) != 0
     }
 }
+
 
 
 
@@ -296,6 +297,7 @@ pub fn current_core_id_from_gs() -> u32 {
     id
 }
 
+/// Returns the APIC of this core.
 #[inline(always)]
 pub fn local_apic_static() -> &'static Mutex<LocalApic> {
     // SAFETY: per-core CLS is heap-leaked; address is stable.
@@ -312,6 +314,7 @@ pub fn tss_static() -> &'static Mutex<TaskStateSegment> {
     unsafe { &(*cls_ptr()).tss }
 }
 
+/// Initializes the per-core TSS by copying a fixed template layout.
 pub fn init_tss_cls() {
     let tss_rsp0_ptr =
         VirtAddr::new(ptr::from_ref(tss_static().lock().deref()) as u64 + size_of::<u32>() as u64);
@@ -379,20 +382,6 @@ pub fn scheduler() -> &'static Scheduler {
 pub fn scheduler_start() {
     unsafe { (*cls_ptr()).scheduler.start(); }
 }
-
-/*
-/// Scheduler.
-/// Manages the execution of threads and switches between them.
-/// Allows to access active threads, put threads to sleep, exit/kill threads and creates new ones.
-pub fn scheduler() -> &'static Scheduler {
-    &cls().scheduler
-}
-
-/// returns without starting if scheduler is already running
-/// otherwise, does not return
-pub fn scheduler_start() {
-    cls_mut().scheduler.start();
-}*/
 
 /// Function for debugging cls specific information
 fn debug_cls() {

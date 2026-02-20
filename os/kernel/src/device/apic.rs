@@ -18,7 +18,6 @@ use x86_64::structures::paging::PageTableFlags;
 use crate::process::core_local_storage::{cls_mut, current_core_id, local_apic_static};
 
 pub struct Apic {
-    //local_apic: Mutex<LocalApic>,
     io_apics: Vec<(Mutex<IoApic>, u32)>, // (0: IO APIC instance, 1: Base Global System Interrupt)
     irq_overrides: Vec<InterruptSourceOverride>,
     nmi_sources: Vec<NmiSource>,
@@ -267,6 +266,7 @@ impl Apic {
             timer_ticks_per_ms,
         }
     }
+    /// Enables the local APIC for the current CPU.
     pub fn enable_local_apic(local_apic: &Mutex<LocalApic>) {
         info!("Initializing Local_apic for CPU [{}]", current_core_id());
 
@@ -286,13 +286,14 @@ impl Apic {
         }
 
         // Calibrate APIC timer
-        //TODO: not working over qemu right now:
-        //let timer_ticks_per_ms = Apic::calibrate_timer(&mut local_apic.lock());
+        // not working over qemu right now:
+        // let timer_ticks_per_ms = Apic::calibrate_timer(&mut local_apic.lock());
         let timer_ticks_per_ms = apic().timer_ticks_per_ms;
         info!("   APIC Timer ticks per millisecond: [{timer_ticks_per_ms}]");
         cls_mut().set_timer_ticks_per_ms(timer_ticks_per_ms);
     }
 
+    /// Creates a new local APIC instance and wraps it in a Mutex.
     pub fn new_local_apic(kernel_core: bool) -> Mutex<LocalApic> {
         // Find APIC relevant structures in ACPI tables
         let madt_mapping = acpi_tables()
@@ -306,6 +307,7 @@ impl Apic {
         local_apic
     }
 
+    /// Creates a new local APIC instance.
     pub fn create_local_apic(madt: &Madt, kernel_core: bool) -> LocalApic {
         let lapic_registers_phys_addr = madt.local_apic_address as u64;
 

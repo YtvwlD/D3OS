@@ -16,19 +16,19 @@ const WIDTH: u32 = 800;
 const HEIGHT: u32 = 600;
 const MAX_ITER: u32 = 1000;
 
-// Komplexe Ebene (klassischer Ausschnitt)
+// Complex Layer (classic Output)
 const RE_MIN: f64 = -2.2;
 const RE_MAX: f64 = 1.0;
 const IM_MIN: f64 = -1.2;
 const IM_MAX: f64 = 1.2;
 
-// Job-Größe: mehrere Zeilen pro Job reduziert Overhead
+// work-load per job, can adjust overhead
 const ROWS_PER_JOB: u32 = 16;
 
-// Anzahl Worker (nimm z.B. Anzahl Cores - 1, oder fix)
-const WORKERS: usize = 4;
+// number of workers (threads)
+const WORKERS: usize = 8;
 
-// Globale Job-Queue (super simpel per Atomic Index)
+// global job-queue
 static NEXT_JOB: AtomicUsize = AtomicUsize::new(0);
 static DONE_WORKERS: AtomicUsize = AtomicUsize::new(0);
 static FB: Once<FramebufferInfo> = Once::new();
@@ -50,12 +50,11 @@ fn mandelbrot(c_re: f64, c_im: f64, max_iter: u32) -> u32 {
     max_iter
 }
 
-// Gibt u32 im Stil 0x00RRGGBB zurück (passt zu PeanutGB-Palette usage)
+// returns u32 in the format 0x00RRGGBB
 fn color(it: u32, max_iter: u32) -> u32 {
     if it >= max_iter {
         return 0x00000000; // schwarz
     }
-    // einfache Farbskala (ohne float->slow? ok für demo)
     let t = it as f64 / max_iter as f64;
     let r = (9.0  * (1.0 - t) * t * t * t * 255.0) as u32;
     let g = (15.0 * (1.0 - t) * (1.0 - t) * t * t * 255.0) as u32;
@@ -64,18 +63,16 @@ fn color(it: u32, max_iter: u32) -> u32 {
 }
 
 unsafe fn draw_row_block(fb: &FramebufferInfo, y0: u32, y1: u32) {
-    // Framebuffer: addr (u64), pitch (bytes/row), bpp, width, height
-    // Wir schreiben 32-bit Pixel, so wie PeanutGB: *mut u32 und pitch/4 pro Zeile.
     let fb_base = fb.addr as *mut u8;
 
-    // Bild zentrieren (optional)
+    // image at center (optional)
     let x_off = if fb.width > WIDTH { (fb.width - WIDTH) / 2 } else { 0 };
     let y_off = if fb.height > HEIGHT { (fb.height - HEIGHT) / 2 } else { 0 };
 
     for y in y0..y1 {
         let c_im = IM_MAX - (y as f64) * (IM_MAX - IM_MIN) / (HEIGHT as f64);
 
-        // Pointer auf Start dieser Bildschirmzeile (zentriert)
+        // Pointer at start (zentriert)
         let row_ptr_u32 = unsafe {
             fb_base.add(((y_off + y) * fb.pitch + x_off * 4) as usize) as *mut u32 };
 
@@ -115,7 +112,7 @@ pub fn main() {
 
     let mut worker_cnt = WORKERS;
     let mut rows_per_job = ROWS_PER_JOB;
-
+    
     for arg in env::args().skip(1) {
         if let Some(v) = arg.strip_prefix("--workers=") {
             worker_cnt = v.parse().unwrap_or(worker_cnt);
@@ -145,15 +142,15 @@ pub fn main() {
 
     if cid_output {print!("Mandelbrot workers starting on cores: ")};
 
-    let time = systime();
+    let time = systime();   // note start time for later
 
     let mut last = thread::create(worker_thread).unwrap();
     for _ in 1..worker_cnt {
         last = thread::create(worker_thread).unwrap();
     }
-    last.join();
+    last.join();    // join last since we can only join one thread at a time
 
-    // busy-wait bis alle Worker fertig
+    // busy-wait until all workers finished
     while DONE_WORKERS.load(Ordering::Acquire) < worker_cnt {
         thread::sleep(100);
     }
