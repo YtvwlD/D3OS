@@ -32,7 +32,7 @@ const WORKERS: usize = 8;
 static NEXT_JOB: AtomicUsize = AtomicUsize::new(0);
 static DONE_WORKERS: AtomicUsize = AtomicUsize::new(0);
 static FB: Once<FramebufferInfo> = Once::new();
-static CID_OUTPUT: AtomicBool = AtomicBool::new(true);
+static CID_OUTPUT: AtomicBool = AtomicBool::new(false);
 static TOTAL_JOBS: AtomicUsize =
     AtomicUsize::new(((HEIGHT + ROWS_PER_JOB - 1) / ROWS_PER_JOB) as usize);
 
@@ -116,19 +116,19 @@ pub fn main() {
     for arg in env::args().skip(1) {
         if let Some(v) = arg.strip_prefix("--workers=") {
             worker_cnt = v.parse().unwrap_or(worker_cnt);
-        } else if let Some(v) = arg.strip_prefix("--rows-per-job=") {
+        } else if let Some(v) = arg.strip_prefix("--rows_per_job=") {
             rows_per_job = v.parse().unwrap_or(rows_per_job);
-        } else if arg.contains("--no-cid") {
-            CID_OUTPUT.store(false, Ordering::Release);
+        } else if arg.contains("--log-cid") {
+            CID_OUTPUT.store(true, Ordering::Release);
         } else {
             println!("Unknown argument: {}", arg);
-            println!("Usage: mandelbrot [--workers=<n>] [--rows-per-job=<n>] [--no-cid]");
+            println!("Usage: mandelbrot [--workers=<n>] [--rows_per_job=<n>] [--log-cid]");
             return;
         }
     }
 
     let cid_output = CID_OUTPUT.load(Ordering::Acquire);
-    let total_jobs = ((HEIGHT + rows_per_job - 1) / ROWS_PER_JOB) as usize;
+    let total_jobs = ((HEIGHT + rows_per_job - 1) / rows_per_job) as usize;
     TOTAL_JOBS.store(total_jobs, Ordering::Release);
 
     let fb = map_framebuffer().expect("map_framebuffer failed");
