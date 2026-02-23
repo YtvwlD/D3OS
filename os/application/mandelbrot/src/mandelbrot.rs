@@ -6,7 +6,7 @@ use concurrent::core::current_core_id;
 use concurrent::thread;
 use graphic::{map_framebuffer, FramebufferInfo};
 use terminal::{print, println};
-use ::time::{date, systime};
+use ::time::systime;
 use spin::Once;
 #[allow(unused_imports)]
 use runtime::*;
@@ -112,7 +112,7 @@ pub fn main() {
 
     let mut worker_cnt = WORKERS;
     let mut rows_per_job = ROWS_PER_JOB;
-    
+
     for arg in env::args().skip(1) {
         if let Some(v) = arg.strip_prefix("--workers=") {
             worker_cnt = v.parse().unwrap_or(worker_cnt);

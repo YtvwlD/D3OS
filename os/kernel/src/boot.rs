@@ -18,7 +18,7 @@ use crate::memory::vma::VmaType;
 use crate::memory::{dram, nvmem, PAGE_SIZE};
 use crate::process::thread::Thread;
 use crate::syscall::{sys_vmem, syscall_dispatcher};
-use crate::{acpi_tables, allocator, apic, boot_ap, built_info, consts, get_initrd_frames, init_acpi_tables, init_apic, init_cpu_info, init_initrd, init_pci, init_serial_port, init_terminal, initrd, ipi, keyboard, logger, memory, network, per_cpu_init, process_manager, scheduler, serial_port, terminal, timer};
+use crate::{acpi_tables, allocator, apic, built_info, consts, get_initrd_frames, init_acpi_tables, init_apic, init_cpu_info, init_initrd, init_pci, init_serial_port, init_terminal, initrd, ipi, keyboard, logger, memory, network, per_cpu_init, process_manager, scheduler, serial_port, terminal, timer};
 use crate::{efi_services_available, naming, storage};
 use alloc::format;
 use alloc::string::ToString;

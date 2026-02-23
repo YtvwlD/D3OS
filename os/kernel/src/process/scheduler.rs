@@ -610,8 +610,8 @@ impl Scheduler {
         let own_threads = read_rq_len() as u32;
         let nbr_cpus = ACTIVE_CPUS.load(Relaxed);
         if own_threads > (nbr_threads /nbr_cpus +1){
-            info!("Scheduler{}: total_threads: {}, own_threads: {}, cpus: {}",
-                current_core_id(), nbr_threads, own_threads, nbr_cpus);
+            /*debug!("Scheduler{}: total_threads: {}, own_threads: {}, cpus: {}",
+                current_core_id(), nbr_threads, own_threads, nbr_cpus);*/
             return true }
         false
     }
@@ -633,11 +633,11 @@ impl Scheduler {
                     // Move one thread from the tail to the target
                     let thread_opt = self.pop_last(state);
                     if let Some(thread) = thread_opt {
-                        let tid = thread.id();
+                        let _tid = thread.id();
                         let w = MessageItem::new_thread(thread);
                         dec_rq_len();
                         if let Ok(_r) = schedule_on(target_core, w) {
-                            info!(" Scheduler{}: Scheduled thread {} on core {}", current_core_id(), tid, target_core);
+                            debug!(" Scheduler{}: Scheduled thread {} on core {}", current_core_id(), _tid, target_core);
                         }
                     }
                 }
@@ -912,15 +912,9 @@ pub fn drain_inbox_into_ready(max: usize, state: &mut ReadyState) {
         match cls().try_recv() {
             Ok(Some(item)) => match item {
                 MessageItem::Thread(thread) => {
-                    let tid = thread.id();
                     state.ready_queue.push_front(thread);
                     inc_rq_len();
                     drained_threads += 1;
-                    log::trace!(
-                        "cpu{}: drained thread {} into ready_queue",
-                        current_core_id(),
-                        tid
-                    );
                 }
                 MessageItem::Cmd(cmd) => {
                     scheduler().handle_inbox_cmd(cmd, state);
@@ -974,15 +968,11 @@ pub fn read_rq_len_remote(target_id: usize) -> u32 {
     per_cpu_ref(target_id).rq_len.load(Ordering::Acquire)
 }
 
-//idle_thread thread that halts the cpu and until it gets woken up by interrupts
+/// Idle_thread thread that checks for available Threads on other Cores and then
+/// halts the cpu until it gets woken up by interrupts. (Other Cpus need to send first)
 extern "sysv64" fn idle_thread () -> () {   //should never return but new_kernel_thread requires it
     loop {
         scheduler().look_for_overloaded_core();
         unsafe { asm!("hlt"); }
     }
-}
-
-//TODO: delete this method
-pub fn debugger_breakpoint_outside_lib() -> usize {
-    return 0;
 }
