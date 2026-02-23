@@ -8,8 +8,7 @@ use crate::syscall::syscall_dispatcher;
 /// First rust function called from assembly boot code for an application core
 #[unsafe(no_mangle)]
 pub extern "C" fn startup_ap(cpu_id: u32) {
-    //info!("    Application processor executing 'startup_ap'");
-    //timer().wait(1000);
+    info!("    Application processor executing 'startup_ap'");
 
     // installs the cpu_id in a cpuLocal struct on the GS segment
     install_gs_base(cpu_id, false);
