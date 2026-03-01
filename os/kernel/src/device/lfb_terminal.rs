@@ -320,7 +320,7 @@ impl LFBTerminal {
         let active_cpu_ids = scheduler::cpu_count();
 
         // Draw info string
-        let info_string = format!("D³OS v{} ({})| Uptime: {:0>2}:{:0>2}:{:0>2} | Processes: {} | Threads: {}[{}] | Cpus: {}",
+        let info_string = format!("D³OS v{} ({})| Uptime: {:0>2}:{:0>2}:{:0>2} | Proc: {} | Threads: {}[{}] | Cpus: {}",
               built_info::PKG_VERSION, built_info::PROFILE,
               uptime.num_hours(), uptime.num_minutes() % 60, uptime.num_seconds() - (uptime.num_minutes() * 60),
               active_process_ids.len(), active_thread_count, alive_thread_count, active_cpu_ids);
