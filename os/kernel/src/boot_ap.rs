@@ -11,7 +11,7 @@ pub extern "C" fn startup_ap(cpu_id: u32) {
     info!("    Application processor executing 'startup_ap'");
 
     // installs the cpu_id in a cpuLocal struct on the GS segment
-    install_gs_base(cpu_id, false);
+    install_gs_base(cpu_id);
     init_gdt_for_this_core();
     cls_mut().init_apic(false);
     syscall_dispatcher::init();

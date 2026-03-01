@@ -44,7 +44,7 @@ pub struct CoreLocalStorage {
 }
 
 impl CoreLocalStorage {
-    pub fn new(id: u32, kernel_core: bool) -> Self {
+    pub fn new(id: u32) -> Self {
         Self {
             self_ptr: 0 as *const CoreLocalStorage,
             tss_rsp0_ptr: VirtAddr::zero(),
@@ -89,16 +89,16 @@ impl CoreLocalStorage {
 }
 
 /// Returns a new CoreLocalStorage Struct with static lifetime
-fn create_core_local_storage(id: u32, boot_processor: bool) -> *mut CoreLocalStorage {
-    let cpu_local = Box::new(CoreLocalStorage::new(id, boot_processor));
+fn create_core_local_storage(id: u32) -> *mut CoreLocalStorage {
+    let cpu_local = Box::new(CoreLocalStorage::new(id));
     let addr = Box::leak(cpu_local) as *mut CoreLocalStorage;
     unsafe { (*addr).self_ptr = addr; }
     addr as *mut CoreLocalStorage
 }
 
 /// Installs a Cpu Local Storage on the GS segment
-pub fn install_gs_base(id: u32, boot_processor: bool) {
-    let core_local_ptr = create_core_local_storage(id, boot_processor);
+pub fn install_gs_base(id: u32) {
+    let core_local_ptr = create_core_local_storage(id);
     KernelGsBase::write(VirtAddr::from_ptr(core_local_ptr));
     set_inbox_apic_id(id as usize);    //sets the apic_id of the current core in the PER_CPU_SCHED Array
 }

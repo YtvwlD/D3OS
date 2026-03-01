@@ -160,7 +160,7 @@ pub extern "C" fn start(multiboot2_magic: u32, multiboot2_addr: *const BootInfor
     // Prerequisite for scheduler, apic & dispatcher (also terminal)
     info!("Initializing per-CPU data structures: {:?}", get_cpu_count());
     per_cpu_init(get_cpu_count(), 100);
-    install_gs_base(0, true);
+    install_gs_base(0);
 
     // Set up the GDT (Global Descriptor Table)
     // Has to be done after EFI boot services have been exited, since they rely on their own GDT
