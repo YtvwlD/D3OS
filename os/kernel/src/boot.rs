@@ -548,8 +548,8 @@ fn start_ap_processors() {
     // send Init-IPI to all APs
     ipi::send_init();
 
-    // wait at least 1s (1000)
-    timer().wait(5000);
+    // wait at least 100ms
+    timer().wait(100);
 
     // The vector is the startup address for the boot code
     let vector: u8 = (boot_ap_start.addr() >> 12).try_into().unwrap();
