@@ -11,6 +11,8 @@
 
 use bitfield_struct::bitfield;
 use core::intrinsics::{volatile_load, volatile_store};
+use raw_cpuid::CpuId;
+use x86_64::registers::model_specific::Msr;
 
 
 // Interrupt Command Register 1, R/W
@@ -18,6 +20,7 @@ pub const INTERRUPT_COMMAND_REGISTER_HIGH:u32 = 0x310;
 
 // Interrupt Command Register 2, R/W
 pub const INTERRUPT_COMMAND_REGISTER_LOW:u32  = 0x300;
+const X2APIC_ICR_MSR: u32 = 0x830;
 
 // Default base address of APIC memory-mapped registers
 pub const APIC_BASE:u32 = 0xfee00000;
@@ -34,6 +37,12 @@ pub fn read_reg32(reg: u32) -> u32 {
 //
 pub fn write_reg32(reg: u32, value: u32) {
 	unsafe {volatile_store((APIC_BASE + reg) as *mut u32, value)};
+}
+
+fn cpu_has_x2apic() -> bool {
+    CpuId::new()
+        .get_feature_info()
+        .is_some_and(|features| features.has_x2apic())
 }
 
 // Trigger mode
@@ -153,6 +162,12 @@ struct InterruptCommand {
 fn read_icr_register() -> InterruptCommand {
 	let mut icr = InterruptCommand::new();
 
+    if cpu_has_x2apic() {
+        let msr = Msr::new(X2APIC_ICR_MSR);
+        let value = unsafe { msr.read() };
+        return value.into();
+    }
+
     // read low 32 bit
 	let mut low_value:u64;
 	loop {
@@ -176,6 +191,12 @@ fn read_icr_register() -> InterruptCommand {
 }
 
 pub unsafe fn send(val: u64) {
+    if cpu_has_x2apic() {
+        let mut msr = Msr::new(X2APIC_ICR_MSR);
+        unsafe { msr.write(val); }
+        return;
+    }
+
 	let high_val:u32 = (val >> 32) as u32;
 	write_reg32(INTERRUPT_COMMAND_REGISTER_HIGH, high_val);
 	
@@ -231,4 +252,3 @@ pub fn send_fixed_to_apic(apic_id: usize, vector: u8) {
 	let val: u64 = icr.into();
 	unsafe { send(val); }
 }
-

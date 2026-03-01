@@ -34,7 +34,7 @@ pub struct CoreLocalStorage {
     tss_rsp0_ptr: VirtAddr,
     user_rsp: VirtAddr,
     id: u32,
-    local_apic: Mutex<LocalApic>,
+    local_apic: Option<Mutex<LocalApic>>,
     timer_ticks_per_ms: usize,  // currently unused => needs new calibration method
     tss: Mutex<TaskStateSegment>,
     gdt: Mutex<GlobalDescriptorTable>,
@@ -50,7 +50,7 @@ impl CoreLocalStorage {
             tss_rsp0_ptr: VirtAddr::zero(),
             user_rsp: VirtAddr::zero(),
             id,
-            local_apic: Apic::new_local_apic(kernel_core),
+            local_apic: None,
             timer_ticks_per_ms: 0,
             tss: Mutex::new(TaskStateSegment::new()),
             gdt: Mutex::new(GlobalDescriptorTable::new()),
@@ -63,7 +63,11 @@ impl CoreLocalStorage {
     /// Returns a reference to the local_apic of this core.
     #[inline(always)]
     pub fn local_apic(&self) -> &Mutex<LocalApic> {
-        &self.local_apic
+        &self.local_apic.as_ref().expect("Local Apic not initialized")
+    }
+
+    pub fn init_apic(&mut self, kernel_core: bool) {
+        self.local_apic = Some(Apic::new_local_apic(kernel_core));
     }
 
     /// Tries to receive a MessageItem from the inbox.
@@ -299,9 +303,8 @@ pub fn current_core_id_from_gs() -> u32 {
 
 /// Returns the APIC of this core.
 #[inline(always)]
-pub fn local_apic_static() -> &'static Mutex<LocalApic> {
-    // SAFETY: per-core CLS is heap-leaked; address is stable.
-    unsafe { &(*cls_ptr()).local_apic }
+pub fn local_apic_static() -> Option<&'static Mutex<LocalApic>> {
+    unsafe { (*cls_ptr()).local_apic.as_ref() }
 }
 
 /// Returns the Task State Segment of this core.

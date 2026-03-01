@@ -244,7 +244,8 @@ impl Apic {
         }
 
         // Create Local APIC instance
-        let mut kernel_local_apic = local_apic_static().lock();
+        cls_mut().init_apic(true);
+        let mut kernel_local_apic = local_apic_static().expect("local APIC not initialized").lock();
         // Initialization is finished -> Enable Local Apic
         unsafe {
             info!(
@@ -371,14 +372,15 @@ impl Apic {
     }
 
     pub fn end_of_interrupt(&self) {
-        let mut local_apic = local_apic_static().try_lock();
+        let mut local_apic = local_apic_static()
+            .expect("local APIC not initialized").try_lock();
         while local_apic.is_none() {
             // It its extremely unlikely, that the local APIC is locked during an interrupt,
             // but if it happens, the whole system would hang, trying to send an EOI.
             unsafe {
                 cls_mut().local_apic().force_unlock();
             }
-            local_apic = local_apic_static().try_lock();
+            local_apic = local_apic_static().expect("local APIC not initialized").try_lock();
         }
 
         unsafe {
