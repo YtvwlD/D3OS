@@ -27,17 +27,36 @@ fn main() {
         // TODO: if we get many concurrent requests, they may fail
         // this is probably because we have no backlog
         if let Ok(client) = listener.accept() {
-            thread::create(|| {
+            thread::create(move || {
                 println!("got a connection from {}", client.peer_addr());
-                let mut buffer: [u8; 4096] = [0; 4096];
-                if let Ok(len) = client.read(&mut buffer) {
-                    let mut headers = [EMPTY_HEADER; 64];
-                    let mut request = Request::new(&mut headers);
-                    match request.parse(&buffer[0..len]) {
-                        Ok(_body_start) => if let Err(e) = handle(request, webroot).send_to(client) {
-                            println!("couldn't send reponse to client: {:?}", e);
-                        },
-                        Err(e) => println!("couldn't parse client request: {:?}", e),
+                loop {
+                    let mut buffer: [u8; 4096] = [0; 4096];
+                    if let Ok(len) = client.read(&mut buffer) {
+                        let mut headers = [EMPTY_HEADER; 64];
+                        let mut request = Request::new(&mut headers);
+                        match request.parse(&buffer[0..len]) {
+                            Ok(_body_start) => {
+                                // HTTP/1.0 defaults to closing the connection after each request,
+                                // HTTP/1.1 defaults to reusing it.
+                                let should_close_connection = if matches!(request.version, Some(0)) {
+                                    request.headers.iter().find(|h| h.name == "Connection" && h.value == b"keep-alive").is_some()
+                                } else {
+                                    request.headers.iter().find(|h| h.name == "Connection" && h.value == b"close").is_some()
+
+                                };
+                                if let Err(e) = handle(request, webroot, should_close_connection).send_to(&client) {
+                                    println!("couldn't send reponse to client: {:?}", e);
+                                    break
+                                }
+                                if should_close_connection {
+                                    break
+                                }
+                            },
+                            Err(e) => {
+                                println!("couldn't parse client request: {:?}", e);
+                                break
+                            },
+                        }
                     }
                 }
             });
@@ -53,15 +72,19 @@ struct Response {
 
 impl Response {
     /// Create a new response.
-    fn new(status: StatusCode) -> Self {
+    fn new(status: StatusCode, should_close_connection: bool) -> Self {
         let mut headers = BTreeMap::new();
         headers.insert("Server".into(), "D3OS httpd".into());
-        headers.insert("Connection".into(), "close".into());
+        headers.insert("Connection".into(), if should_close_connection {
+            "close"
+        } else {
+            "keep-alive"
+        }.into());
         Self { status, headers, body: Vec::new() }
     }
     
     /// Send this response to a client.
-    fn send_to(mut self, client: TcpStream) -> Result<(),  NetworkError> {
+    fn send_to(mut self, client: &TcpStream) -> Result<(),  NetworkError> {
         client.write(format!("HTTP/1.1 {}\n", self.status).as_bytes())?;
         self.headers.insert("Content-Length".into(), format!("{}", self.body.len()).into());
         for (header_name, header_value) in self.headers {
@@ -101,7 +124,7 @@ impl Display for StatusCode {
 }
 
 /// Handle this request, returning a response.
-fn handle(request: Request, webroot: &str) -> Response {
+fn handle(request: Request, webroot: &str, should_close_connection: bool) -> Response {
     println!("handling request {:?}", request);
     if request.method == Some("GET") {
         if let Some(mut request_path) = request.path {
@@ -111,7 +134,7 @@ fn handle(request: Request, webroot: &str) -> Response {
             }
             let path = format!("{webroot}/{request_path}");
             if let Ok(fh) = open(&path, OpenOptions::READONLY) {
-                let mut r = Response::new(StatusCode::Ok);
+                let mut r = Response::new(StatusCode::Ok, should_close_connection);
                 let mut buf: [u8; 4096] = [0; 4096];
                 loop {
                     let amount = read(fh, &mut buf).expect("failed to read file");
@@ -136,12 +159,12 @@ fn handle(request: Request, webroot: &str) -> Response {
                 return r;
             }
         }
-        let mut r = Response::new(StatusCode::NotFound);
+        let mut r = Response::new(StatusCode::NotFound, should_close_connection);
         r.headers.insert("Content-Type".into(), "text/plain; charset=UTF-8".into());
         r.body.extend("File not found".as_bytes());
         r
     } else {
-        let mut r = Response::new(StatusCode::MethodNotAllowed);
+        let mut r = Response::new(StatusCode::MethodNotAllowed, should_close_connection);
         r.headers.insert("Allowed".into(), "GET".into());
         r.body.extend(format!("Method not allowed").as_bytes());
         r
