@@ -38,11 +38,12 @@ STACK_SIZE_ONE: equ 409600	; Stack Groesse von einem einzelnem AP
 [EXTERN startup_ap]
 ; In 'interrupt_dispatcher.rs'
 [EXTERN setup_ap_idt]
-; In 'interrupt_dispatcher.rs'
-[EXTERN kernel_cr3]
 ; In 'linker.ld'
 [EXTERN ___BOOT_AP_START__]
 [EXTERN ___BOOT_AP_END__]
+
+
+[global ___KERNEL_CR3__]
 
 
 ; The Segment '.boot_seg_ap' will be relocated by the bootstrap proc.
@@ -154,7 +155,7 @@ init_longmode:
 
 set_cr3:
 	; Setup paging tables (required for long mode)
-    mov eax, [kernel_cr3]
+    mov eax, [___KERNEL_CR3__]
     mov    cr3, eax
 
 	; Switch to long mode (for the time being in compatibility mode)
@@ -195,6 +196,9 @@ end:
 
 
 [SECTION .data]
+
+___KERNEL_CR3__:
+	dq 0
 
 ;
 ; GDT

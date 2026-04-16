@@ -132,12 +132,6 @@ multiboot2_header:
 
 header_end:
 
-[SECTION .data]
-[GLOBAL kernel_cr3]
-align 8
-kernel_cr3: dq 0
-
-
 [SECTION .text]
 boot:
     cld ; Expected by GCC
@@ -154,9 +148,6 @@ clear_bss:
     ; Switch stack to our own stack, because the EFI stack may be located inside
     ; reserved memory and will thus be ignored by our paging implementation.
     mov rsp, init_stack.end
-
-    mov     rcx, cr3    ;save bp-cr3 for ap's
-    mov     [kernel_cr3], rcx
 
     ; Call rust function with multiboot2 magic number and address (initially located in eax and ebx)
     xor rdi, rdi

@@ -15,8 +15,9 @@ use x86_64::VirtAddr;
 
 use crate::memory::{vmm, MemorySpace};
 use crate::memory::vma::VmaType;
+use crate::process::core_local_storage::scheduler;
 use crate::process::process::Process;
-use crate::scheduler;
+use crate::process::process_stats::ProcStat;
 
 pub struct ProcessManager {
     active_processes: Vec<Arc<Process>>,
@@ -86,17 +87,30 @@ impl ProcessManager {
         self.active_processes.iter().map(|process| process.id()).collect()
     }
 
+    /// Return true if the process is active
+    pub fn is_active_process(&self, pid: usize) -> bool {
+        self.active_processes.iter().any(|process| process.id() == pid)
+    }
+
+    /// Return a snapshot of the process
+    pub fn get_stats(&self, pid: usize) -> Option<Arc<ProcStat>> {
+        self.active_processes
+            .iter()
+            .find(|process| process.id() == pid)
+            .map(|process| Arc::new(ProcStat::from_process(process)))
+    }
+
+    /// Return Vec of all Process-Stats
+    pub fn get_all_stats(&self) -> Vec<Arc<ProcStat>> {
+        self.active_processes
+            .iter()
+            .map(|process| Arc::new(ProcStat::from_process(process)))
+            .collect()
+    }
+
     /// Get reference to kernel process
     pub fn kernel_process(&self) -> Option<Arc<Process>> {
         self.active_processes.first().map(Arc::clone)
-    }
-
-    pub fn try_current_process(&self) -> Arc<Process> {
-        let thread = scheduler().try_current_thread();
-        if thread.is_none() {
-            return self.kernel_process().unwrap();
-        }
-        thread.unwrap().process()
     }
 
     /// Get reference to current process

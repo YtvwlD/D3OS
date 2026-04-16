@@ -24,14 +24,17 @@
    ║ Author: Fabian Ruhland, 05.09.2025, HHU                                 ║
    ╚═════════════════════════════════════════════════════════════════════════╝
 */
-use crate::process::thread::Thread;
-use crate::{allocator, apic, cls, per_cpu_ref, timer};
+use crate::process::thread::{Thread, ThreadState};
+use crate::{allocator, apic, per_cpu_ref, process_manager, timer, tss};
 use alloc::collections::VecDeque;
+use alloc::string::String;
 use alloc::sync::Arc;
-use alloc::vec;
+use alloc::{format, vec};
 use alloc::vec::Vec;
+use syscall::return_vals::Errno;
 use core::{panic, ptr};
 use core::arch::asm;
+use core::fmt::Write;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::sync::atomic::AtomicU32;
 use core::sync::atomic::Ordering::{Relaxed};
@@ -42,7 +45,7 @@ use thingbuf::mpsc::{Sender};
 use crate::device::apic::get_apic_id;
 use crate::device::cpu::{disable_int_nested, enable_int_nested};
 use crate::ipi::send_fixed_to_apic;
-use crate::process::core_local_storage::{current_core_id, preempt_is_disabled, scheduler, tss_static};
+use crate::process::core_local_storage::{cls, current_core_id, preempt_is_disabled, scheduler, tss_static};
 
 // thread IDs
 pub static THREAD_ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -99,11 +102,17 @@ pub struct ReadyState {
 
 impl ReadyState {
     pub fn new() -> Self {
+
+        let initialized = false;
+        let current_thread = None;
+        let ready_queue = VecDeque::new();
+        let idle_thread = Thread::new_kernel_thread(idle_thread, "idle");
+
         Self {
-            initialized: false,
-            current_thread: None,
-            ready_queue: VecDeque::new(),
-            idle_thread: Thread::new_kernel_thread(idle_thread, "idle"),
+            initialized: initialized,
+            current_thread: current_thread,
+            ready_queue: ready_queue,
+            idle_thread: idle_thread,
         }
     }
 }
@@ -130,12 +139,22 @@ impl Scheduler {
 
     /// Create and initialize the scheduler.
     pub fn new() -> Self {
+        info!("Initializing scheduler for CPU {}", current_core_id());
+        let vec = Vec::new();
+        let rs = ReadyState::new();
+
+        let ready_state = Mutex::new(rs);
+        let sleep_list = Mutex::new(vec);
+        let blocked_list = Mutex::new(Vec::new());
+        let join_map = Mutex::new(Map::new());
+        let has_started = false;
+
         Self {
-            ready_state: Mutex::new(ReadyState::new()),
-            sleep_list: Mutex::new(Vec::new()),
-            blocked_list: Mutex::new(Vec::new()),
-            join_map: Mutex::new(Map::new()),
-            has_started: false,
+            ready_state: ready_state,
+            sleep_list: sleep_list,
+            blocked_list: blocked_list,
+            join_map: join_map,
+            has_started: has_started,
         }
     }
 
@@ -186,6 +205,18 @@ impl Scheduler {
     pub fn try_current_thread(&self) -> Option<Arc<Thread>> {
         let state = self.get_ready_state();
         Scheduler::try_current(&state)
+    }
+
+    /// Try to return reference to current thread (called from interrupt dispatcher)
+    pub fn try_get_current_thread(&self) -> Option<Arc<Thread>> {
+        if self.ready_state.is_locked() {
+            return None;
+        }
+        if allocator().is_locked() {
+            return None;
+        }
+        let state = self.get_ready_state();
+        Some(Scheduler::current(&state))
     }
 
     /// Return reference to thread identified by `thread_id`
@@ -317,10 +348,10 @@ impl Scheduler {
     }
 
     /// Calling thread will block until thread with `thread_id` has terminated
-    pub fn join(&self, thread_id: usize) {
+    pub fn join(&self, thread_id: usize) -> Result<usize, Errno> {
         // Fast path => if it's already dead, don't block.
         if !is_thread_alive(thread_id) {
-            return;
+            return Err(Errno::ESRCH);
         }
 
         let state = self.get_ready_state();
@@ -329,7 +360,7 @@ impl Scheduler {
             // Execute in own block, so that the lock is released automatically (block() does not return)
             let mut join_map = self.join_map.lock();
             if !is_thread_alive(thread_id) {
-                return;
+                return Err(Errno::ESRCH);
             }
             if let Some(join_list) = join_map.get_mut(&thread_id) {
                 join_list.push(thread);
@@ -341,6 +372,7 @@ impl Scheduler {
 
         dec_rq_len();
         self.block_and_switch(state);
+        Ok(0)
     }
 
     fn unjoin(&self, thread_id: usize, ready_state: &mut ReadyState) {
@@ -521,6 +553,60 @@ impl Scheduler {
         unsafe {
             Thread::switch(current_ptr, next_ptr);
         }
+    }
+
+    /// Prepare to block the calling thread
+    /// Used from wait_queue to prepare the thread for blocking and get its (pid, tid) for later `notify_one` and `notify_all` calls
+    /// Returns (pid, tid)
+    pub fn park_current(&self) -> (usize, usize) {
+        let state = self.get_ready_state();
+        let thread = Scheduler::current(&state);
+        thread.set_state(ThreadState::Parking);
+        (thread.process().id(), thread.id())
+    }
+
+    /// Unblock thread with given (pid, tid). \
+    /// Returns true if thread was found and unblocked, false otherwise.
+    pub fn unblock(&self, pid: usize, tid: usize) -> bool {
+       // info!("Unblock: Thread with PID={}, TID={}", pid, tid);
+
+        // Synchronize against `thread_switch`
+        let mut state = self.ready_state.lock();
+
+        // 1) Check if the given thread is in the blocked list -> need to be woken up
+        let blocked_thread: Option<Arc<Thread>> = {
+            let mut block_list = self.blocked_list.lock();
+            if let Some(pos) = block_list.iter().position(|t| t.id() == tid && t.process().id() == pid) {
+                Some(block_list.remove(pos))
+            } else {
+                None
+            }
+        };
+
+        // If we found a blocked thread in the block_list, wake it up
+        if let Some(thread) = blocked_thread {
+            // let mut state = self.get_ready_state();
+            thread.set_state(ThreadState::Ready);
+            state.ready_queue.push_front(Arc::clone(&thread));
+            return true;
+        }
+
+        // 2a) Check if the thread to be woken up is the current thread (it has not been blocked)
+        if let Some(curr_thread) = &state.current_thread {
+            if curr_thread.id() == tid && curr_thread.process().id() == pid {
+                curr_thread.set_state(ThreadState::Running);
+                return true;
+            }
+
+        // 2b) Check if the thread to be woken up is in the ready queue
+        if let Some(thread) = state.ready_queue.iter().find(|t| t.id() == tid && t.process().id() == pid) {
+                curr_thread.set_state(ThreadState::Ready);
+                return true;
+            }
+        }
+
+        // 3) Thread not found in any known list.
+        false
     }
 
     /// Switch from current to next thread (from ready queue). \
@@ -757,6 +843,43 @@ impl Scheduler {
         }
     }
 
+    /// For ps command - get all processes & threads
+    pub fn get_status(&self, buffer: &mut [u8]) -> Result<usize, Errno> {
+        let mut out = String::new();
+
+        // Current
+        let cur = self.current_thread();
+        let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}", cur.process().id(), cur.id(), ThreadState::Running);
+
+        // Ready Queue
+        let state = self.get_ready_state();
+        for thread in state.ready_queue.iter() {
+            let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}", thread.process().id(), thread.id(), thread.state());
+        }
+
+        // Sleep List
+        let sleep_list = self.sleep_list.lock();
+        for entry in sleep_list.iter() {
+            // You used thread.0 in dump(), so keep that shape
+            let t = &entry.0;
+            let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}", t.process().id(), t.id(), t.state());
+        }
+        drop(sleep_list);
+
+        // Block list
+        let block_list = self.blocked_list.lock();
+        for thread in block_list.iter() {
+            let _ = writeln!(out, "PID: {}, TID: {}, State: {:?}", thread.process().id(), thread.id(), thread.state());
+        }
+        drop(block_list);
+
+        // Copy to caller buffer (truncate if needed)
+        let bytes = out.as_bytes();
+        let len = core::cmp::min(bytes.len(), buffer.len());
+        buffer[..len].copy_from_slice(&bytes[..len]);
+        Ok(len)
+    }
+
     /// Handle a command received via inbox, using the already-held ready_state lock (`state`).
     fn handle_inbox_cmd(&self, cmd: MessageCmd, state: &mut ReadyState) {
         match cmd {
@@ -796,6 +919,71 @@ impl Scheduler {
                 }
                 self.kill_locally(tid, state);
             }
+        }
+    }
+
+    
+    /// Voluntarily yield the CPU to another runnable thread.
+    ///
+    /// Requirements / assumptions:
+    /// - Must be called when it is safe to switch (no stack locks, tss not locked).
+    /// - Does not change Parking/Blocked semantics; caller should set state beforehand if needed.
+    pub fn yield_now(&self) {
+        let mut state = self.get_ready_state();
+
+        if !state.initialized {
+            return;
+        }
+
+        // Current thread (Arc clone of state.current_thread)
+        let current = Scheduler::current(&state);
+
+        // Same restrictions as your timer-driven switching path
+        if current.stacks_locked() || tss().is_locked() {
+            return;
+        }
+
+        // If there is nobody else runnable, don't bother.
+        // (Note: ready_queue does NOT include the current thread yet.)
+        if state.ready_queue.is_empty() {
+            return;
+        }
+
+        // Requeue current as Ready
+        current.set_state(ThreadState::Ready);
+        state.ready_queue.push_front(Arc::clone(&current));
+
+        // Pick next
+        let next = match state.ready_queue.pop_back() {
+            Some(t) => t,
+            None => {
+                // Shouldn't happen because we checked !empty, but be safe
+                current.set_state(ThreadState::Running);
+                return;
+            }
+        };
+
+        // If we ended up picking ourselves (possible if only ourselves was in queue),
+        // restore running state and return.
+        if next.id() == current.id() {
+            next.set_state(ThreadState::Running);
+            state.current_thread = Some(next);
+            return;
+        }
+
+        // Switch to next
+        next.set_state(ThreadState::Running);
+        state.current_thread = Some(Arc::clone(&next));
+
+        let current_ptr = core::ptr::from_ref(current.as_ref());
+        let next_ptr = core::ptr::from_ref(next.as_ref());
+
+        // ready_state is unlocked in your asm trampoline via unlock_scheduler()
+        // (Thread::switch ultimately calls unlock_scheduler after switch)
+        drop(current);
+
+        unsafe {
+            Thread::switch(current_ptr, next_ptr);
         }
     }
 }

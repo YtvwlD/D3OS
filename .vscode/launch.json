@@ -8,12 +8,13 @@
             "request": "launch",
             "program": "${workspaceRoot}/loader/kernel.elf",
             "cwd": "${workspaceFolder}",
-            "miDebuggerPath": "/home/exalw/.cargo/bin/rust-gdb",
+            "miDebuggerPath": "rust-gdb",
             "miDebuggerServerAddress": "localhost:1234",
             "stopAtEntry": false,
             "setupCommands": [
-                { "text": "-enable-pretty-printing" },
-                { "text": "set disassembly-flavor intel"}
+                {"text": "-enable-pretty-printing"},
+                {"text": "set disassembly-flavor intel"},
+                {"text": "add-symbol-file ${workspaceRoot}/loader/initrd/bin/hello"}
             ],
             "preLaunchTask": "qemu-gdb"
         }

@@ -13,4 +13,3 @@ impl InterruptHandler for ReschedIpiHandler {
         set_resched_flag();
     }
 }
-

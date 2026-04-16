@@ -4,6 +4,8 @@ use pci_types::{BaseClass, ConfigRegionAccess, EndpointHeader, HeaderType, PciAd
 use spin::{Mutex, RwLock};
 use x86_64::instructions::port::{Port, PortWriteOnly};
 
+use virtio::transport::pci::bus::ConfigurationAccess as VirtioConfigAccess;
+
 const MAX_DEVICES_PER_BUS: u8 = 32;
 const MAX_FUNCTIONS_PER_DEVICE: u8 = 8;
 const INVALID: u16 = 0xffff;
@@ -15,6 +17,14 @@ pub struct PciBus {
 
 pub struct ConfigurationSpace {
     ports: Mutex<ConfigurationPorts>,
+}
+
+impl Clone for ConfigurationSpace {
+    fn clone(&self) -> Self {
+        Self {
+            ports: Mutex::new(ConfigurationPorts::new()),
+        }
+    }
 }
 
 struct ConfigurationPorts {
@@ -68,6 +78,23 @@ impl ConfigRegionAccess for ConfigurationSpace {
     }
 }
 
+// neuer ConfigAccess für VirtIO Geräte
+impl VirtioConfigAccess for ConfigurationSpace {
+    fn read_word(&self, device_function: virtio::transport::pci::bus::DeviceFunction, register_offset: u8) -> u32 {
+        let address = PciAddress::new(0, device_function.bus, device_function.device, device_function.function);
+        unsafe { self.read(address, register_offset as u16) }
+    }
+
+    fn write_word(&mut self, device_function: virtio::transport::pci::bus::DeviceFunction, register_offset: u8, data: u32) {
+        let address = PciAddress::new(0, device_function.bus, device_function.device, device_function.function);
+        unsafe { self.write(address, register_offset as u16, data) };
+    }
+    
+    unsafe fn unsafe_clone(&self) -> Self { // Treiber Forderung
+        self.clone()
+    }
+}
+
 impl PciBus {
     pub fn scan() -> Self {
         let mut pci = Self {
@@ -98,6 +125,14 @@ impl PciBus {
     #[inline(always)]
     pub fn config_space(&self) -> &ConfigurationSpace {
         &self.config_space
+    }
+
+    /// neu um VirtIO Geräte zu finden
+    pub fn search_by_vendor(&self, vendor_id: u16) -> Vec<&RwLock<EndpointHeader>> {
+        self.devices
+            .iter()
+            .filter(|device| device.read().header().id(self.config_space()).0 == vendor_id)
+            .collect()
     }
 
     pub fn search_by_ids(&self, vendor_id: u16, device_id: u16) -> Vec<&RwLock<EndpointHeader>> {
@@ -140,11 +175,6 @@ impl PciBus {
         if device.has_multiple_functions(self.config_space()) {
             for i in 1..MAX_FUNCTIONS_PER_DEVICE {
                 let address = PciAddress::new(address.segment(), address.bus(), address.device(), i);
-                let device = PciHeader::new(address);
-                if device.id(self.config_space()).0 == INVALID {
-                    break;
-                }
-
                 self.check_function(address)
             }
         }
@@ -154,12 +184,17 @@ impl PciBus {
         let device = PciHeader::new(address);
         let id = device.id(self.config_space());
 
+        if id.0 == INVALID {
+            return;
+        }
+        info!("[PCI SCAN DEBUG] Checking... Vendor:Device = {:04x}:{:04x}", id.0, id.1);
+
         if device.header_type(self.config_space()) == HeaderType::PciPciBridge {
             info!("Found PCI-to-PCI bridge on bus [{}]", address.bus());
             let bridge = PciPciBridgeHeader::from_header(device, self.config_space()).unwrap();
             self.scan_bus(PciAddress::new(0x8000, bridge.secondary_bus_number(self.config_space()), 0, 0));
         } else {
-            info!("Found PCI device [0x{:0>4x}:0x{:0>4x}] on bus [{}]", id.0, id.1, address.bus());
+            info!("Found PCI device [0x{:0>4x}:0x{:0>4x}] at [{:02x}:{:02x}.{:x}]", id.0, id.1, address.bus(), address.device(), address.function());
             self.devices
                 .push(RwLock::new(EndpointHeader::from_header(device, self.config_space()).unwrap()));
         }

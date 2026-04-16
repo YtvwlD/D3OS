@@ -22,18 +22,15 @@ SECTIONS {
      *   8MB to 9MB:   ACPI
      *   9MB to 24MB:  Boot Services
      */
-
     . = 25M;
 
     ___KERNEL_DATA_START__ = .;
 
     .boot :
     {
-        /* ensure that the multiboot header is at the beginning */
         *(.multiboot2_sec)
     }
-
-
+    
     .text ALIGN (4K) :
     {
         *(.text*)

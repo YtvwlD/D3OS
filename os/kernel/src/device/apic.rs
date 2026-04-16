@@ -1,7 +1,8 @@
 use crate::interrupt::interrupt_dispatcher::InterruptVector;
 use crate::interrupt::interrupt_handler::InterruptHandler;
 use crate::memory::vma::VmaType;
-use crate::{acpi_tables, allocator, apic, cls, interrupt_dispatcher, process_manager, scheduler, timer};
+use crate::process::core_local_storage::{cls, cls_mut, current_core_id, local_apic_static, scheduler};
+use crate::{acpi_tables, allocator, apic, interrupt_dispatcher, process_manager, timer};
 use acpi::InterruptModel;
 use acpi::madt::Madt;
 use acpi::platform::interrupt::{InterruptSourceOverride, NmiSource, Polarity, TriggerMode};
@@ -15,9 +16,31 @@ use uefi::boot::PAGE_SIZE;
 use x2apic::ioapic::{IoApic, IrqFlags, IrqMode, RedirectionTableEntry};
 use x2apic::lapic::{LocalApic, LocalApicBuilder, TimerDivide, TimerMode};
 use x86_64::structures::paging::PageTableFlags;
-use crate::process::core_local_storage::{cls_mut, current_core_id, local_apic_static};
+use core::sync::atomic::{AtomicU64, Ordering};
+
+// monotonic clock, used for /proc/ticks
+static TICK_COUNT: AtomicU64 = AtomicU64::new(0);
+static TICK_INTERVAL_MS: AtomicU64 = AtomicU64::new(0);
+
+pub fn init_tick_clock(interval_ms: usize) {
+    TICK_INTERVAL_MS.store(interval_ms as u64, Ordering::Relaxed);
+}
+
+pub fn on_timer_tick() {
+    TICK_COUNT.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn now_ticks() -> u64 {
+    TICK_COUNT.load(Ordering::Relaxed)
+}
+
+pub fn now_ms() -> u64 {
+    now_ticks() * TICK_INTERVAL_MS.load(Ordering::Relaxed)
+}
 
 pub struct Apic {
+    /// Local APIC instance
+    ///local_apic: Mutex<LocalApic>,
     io_apics: Vec<(Mutex<IoApic>, u32)>, // (0: IO APIC instance, 1: Base Global System Interrupt)
     irq_overrides: Vec<InterruptSourceOverride>,
     nmi_sources: Vec<NmiSource>,
@@ -32,6 +55,7 @@ struct ApicTimerInterruptHandler {}
 
 impl InterruptHandler for ApicTimerInterruptHandler {
     fn trigger(&self) {
+        on_timer_tick(); // increase monotone clock
         scheduler().switch_thread_from_interrupt();
     }
 }
@@ -88,6 +112,9 @@ impl Apic {
 
         // Vector to store initialized IO APICs with their base interrupt number
         let mut io_apics = Vec::<(Mutex<IoApic>, u32)>::new();
+
+        // Create Local APIC instance
+        // let local_apic = Mutex::new(Self::create_local_apic(&madt));
 
         match int_model.0 {
             InterruptModel::Apic(apic_desc) => {
@@ -243,7 +270,7 @@ impl Apic {
             }
         }
 
-        // Create Local APIC instance
+        // Initialization is finished -> Enable Local Apic
         cls_mut().init_apic(true);
         let mut kernel_local_apic = local_apic_static().expect("local APIC not initialized").lock();
         // Initialization is finished -> Enable Local Apic
@@ -258,15 +285,16 @@ impl Apic {
         // Calibrate APIC timer
         let timer_ticks_per_ms = Apic::calibrate_timer(&mut *kernel_local_apic);
         cls_mut().set_timer_ticks_per_ms(timer_ticks_per_ms);
-        info!("   APIC Timer ticks per millisecond: [{timer_ticks_per_ms}]");
 
         Self {
+            //local_apic,
             io_apics,
             irq_overrides,
             nmi_sources,
             timer_ticks_per_ms,
         }
     }
+
     /// Enables the local APIC for the current CPU.
     pub fn enable_local_apic(local_apic: &Mutex<LocalApic>) {
         info!("Initializing Local_apic for CPU [{}]", current_core_id());
