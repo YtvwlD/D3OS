@@ -380,7 +380,7 @@ impl Rtl8139 {
 
         // Make sure bus master and memory space are enabled for MMIO register access
         pci_device.update_command(pci_config_space, |command| {
-            command.bitor(CommandRegister::BUS_MASTER_ENABLE | CommandRegister::MEMORY_ENABLE)
+            command.bitor(CommandRegister::BUS_MASTER_ENABLE | CommandRegister::IO_ENABLE | CommandRegister::MEMORY_ENABLE)
         });
 
         // Read register base address from BAR0
