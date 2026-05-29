@@ -2,7 +2,7 @@ use input::ReadKeyboardOption;
 use log::error;
 use stream::{event_to_u16, DecodedInputStream, RawInputStream};
 
-use crate::{keyboard, mouse, scheduler};
+use crate::{keyboard, mouse, process::core_local_storage::scheduler};
 
 pub extern "sysv64" fn sys_read_mouse() -> usize {
     match mouse() {
